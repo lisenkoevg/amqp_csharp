@@ -4,7 +4,10 @@ if exist amqp.exe del amqp.exe
 set path=c:\Windows\Microsoft.NET\Framework64\v4.0.30319\;%path%
 :: set path=c:\Windows\Microsoft.NET\Framework64\v3.5\;%path%
 
+:: debug
 set AxaptaMock=lib\AxMock.cs
+
+:: production
 :: set AxaptaRef=/r:"C:\...\Microsoft.Dynamics.BusinessConnectorNet.dll"
 
 set filelist=AMQP.cs lib\ConfigLoader.cs lib\AxCon.cs lib\Util.cs lib\dbg.cs %AxaptaMock%
