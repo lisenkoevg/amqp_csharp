@@ -5,7 +5,7 @@ set path=c:\Windows\Microsoft.NET\Framework64\v4.0.30319\;%path%
 :: set path=c:\Windows\Microsoft.NET\Framework64\v3.5\;%path%
 
 set AxaptaMock=lib\AxMock.cs
-:: set AxaptaRef=/r:Microsoft.Dynamics.BusinessConnectorNet.dll
+:: set AxaptaRef=/r:"C:\...\Microsoft.Dynamics.BusinessConnectorNet.dll"
 
 set filelist=AMQP.cs lib\ConfigLoader.cs lib\AxCon.cs lib\Util.cs lib\dbg.cs %AxaptaMock%
 set ref=/r:RabbitMQ.Client.dll /r:YamlDotNet.dll /r:fastjson.dll %AxaptaRef%
