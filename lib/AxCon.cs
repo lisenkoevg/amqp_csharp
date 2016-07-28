@@ -293,24 +293,14 @@ public class AxCon
                 case "date":
                     if (val is string && DateTime.TryParse(val, out dt))
                     {
-                        val = dt.ToString("dd.MM.yyyy");
+                        ax_class_call(ax_class, param_config["setter"], dt.ToString("dd.MM.yyyy"));
                     }
-                    else
-                    {
-                        val = "";
-                    }
-                    ax_class_call(ax_class, param_config["setter"], val);
                     break;
                 case "datetime":
                     if (val is string && DateTime.TryParse(val, out dt))
                     {
-                        val = dt.ToString("dd.MM.yyyy HH:mm:ss");
+                        ax_class_call(ax_class, param_config["setter"], dt.ToString("dd.MM.yyyy HH:mm:ss"));
                     }
-                    else
-                    {
-                        val = "";
-                    }
-                    ax_class_call(ax_class, param_config["setter"], val);
                     break;
                 case "array":
                     if (!(val is IList))
