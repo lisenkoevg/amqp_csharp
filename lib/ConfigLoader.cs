@@ -18,7 +18,17 @@ Add single quotes (need for YamlDotNet.Serialization.Deserializer):
 segment:
 ...
     description: 'Сегмент продукции (условный код: "development", "production" итп.)'
-    
+
+item_info.yaml
+output
+    discontinued
+    regulations
+ declared type is boolean, but returns int
+ 
+ search_item_name_h.yaml
+     application_area_mandatory Int32
+    reserve_control Int32
+    special_offer Int32
 */
 
 class ConfigLoader
@@ -61,13 +71,21 @@ class ConfigLoader
         dynamic result;
         
         var deserializer = new Deserializer();
-        // Load Yaml
-        var yamlObject = deserializer.Deserialize(new StreamReader(path));
-        // then serialize to JSON
+        dynamic yamlObject = new Object();
+        try
+        {
+            // Dictionary<object,object>
+            yamlObject = deserializer.Deserialize(new StreamReader(path));
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine("Exception while deserializing file {0}\n{1}", path, e.Message);
+            Environment.Exit(1);
+        }
         var serializer = new Serializer(SerializationOptions.JsonCompatible);
         var str = new StringWriter();
         serializer.Serialize(str, yamlObject);
-        // and then to .NET object (nested Dictionaries and Lists)
+        // Dictionary<string,object>
         result = JSON.Parse(str.ToString());
         return result;
     }

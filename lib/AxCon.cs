@@ -38,14 +38,14 @@ public class AxCon
         ax_class_pool = new Dictionary<string,AxaptaObject>();
         
         // add config for Axapta mock object
-        ax = new Axapta(config["methods"]);
-        // ax = new Axapta();
+        //ax = new Axapta(config["methods"]);
+        ax = new Axapta();
         Logon();
     }
     
     private void Logon()
     {
-        ax.Logon("", "", "", "");
+        ax.Logon("rba", "ru", "192.168.3.120:2714", "");
     }
 
     public Dictionary<string,object> request(string method, Dictionary<string,dynamic> prms, string id = "")
@@ -172,10 +172,10 @@ public class AxCon
             "response",
             new Dictionary<string,dynamic>(){
                 {"response", response},
-                {"elapsed", stopWatch.Elapsed.TotalMilliseconds}
+                {"elapsed", System.Math.Round(stopWatch.Elapsed.TotalMilliseconds, 0)}
             }
         );
-        response["elapsed"] = stopWatch.Elapsed.TotalMilliseconds;
+        response["elapsed"] = System.Math.Round(stopWatch.Elapsed.TotalMilliseconds, 0);
         
         return response;
     }    
@@ -198,6 +198,7 @@ public class AxCon
                 result = ax_class.Call(method);
                 break;
             case 1:
+//                Console.WriteLine("ax_class_call {0} {1}", method, prms[0]);
                 result = ax_class.Call(method, prms[0]);
                 break;
             case 2:
@@ -271,6 +272,7 @@ public class AxCon
                 string param_type = (!Util.IsNullOrEmptySubitem(param_config, "type"))
                     ? param_config["type"]
                     : "default";
+                //Console.WriteLine("{0} {1}", param_name, val.GetType().Name);
                 switch (param_type)
                 {
                 case "string":
@@ -282,13 +284,22 @@ public class AxCon
                     {
                         val = val.Replace(",", ".");
                     }
-                    ax_class_call(ax_class, param_config["setter"], (float)val);
+                    ax_class_call(ax_class, param_config["setter"], Convert.ToSingle(val));
                     break;
                 case "integer":
-                    ax_class_call(ax_class, param_config["setter"], (int)val);
+                    ax_class_call(ax_class, param_config["setter"], Convert.ToInt32(val));
                     break;
                 case "boolean":
-                    ax_class_call(ax_class, param_config["setter"], (bool)val);
+                    bool bVal;
+                    int iVal;
+                    if (Boolean.TryParse(val, out bVal)) // "true" or "false"
+                    {
+                        ax_class_call(ax_class, param_config["setter"], bVal);
+                    }
+                    else if (Int32.TryParse(val, out iVal))
+                    {
+                        ax_class_call(ax_class, param_config["setter"], iVal != 0);
+                    }
                     break;
                 case "date":
                     if (val is string && DateTime.TryParse(val, out dt))
@@ -366,7 +377,7 @@ public class AxCon
                 default:
                     if (!Util.IsNullOrEmpty(val))
                     {
-                        val = value2enum((string)val, param_config["type"]);
+                        val = value2enum(val, param_config["type"]);
                         ax_class_call(ax_class, param_config["setter"], val);
                     }
                     break;
@@ -401,7 +412,14 @@ public class AxCon
                     val = (int)ax_class_call(ax_class, param_config["getter"]);
                     break;
                 case "boolean":
-                    val = (bool)ax_class_call(ax_class, param_config["getter"]);
+                    val = ax_class_call(ax_class, param_config["getter"]);
+                    if (!(val is bool))
+                    {
+                        Console.WriteLine("Wrong type declaration in config file: {0} is actually {1}", param_name, val.GetType().Name);
+                        dbg.f(string.Format("Wrong type declaration in config file: {0} is actually {1}", param_name, val.GetType().Name), "WrongConfig");
+                        val = (val != 0);
+                    }
+                    val = (bool)val;
                     break;
                 case "date":
                     val = ax_class_call(ax_class, param_config["getter"]);

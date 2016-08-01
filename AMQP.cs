@@ -23,7 +23,7 @@ public class AMQP
     public AMQP()
     {
         ChDir();
-        queue = "ax.sync";
+        queue = "ax.test";
         config = ConfigLoader.Load("./config");
     }
 
@@ -41,13 +41,13 @@ public class AMQP
         using (IConnection connection = factory.CreateConnection())
         using (IModel channel = connection.CreateModel())
         {
-            // channel.QueueDeclare(
-                // queue: queue,
-                // durable: true,
-                // exclusive: false,
-                // autoDelete: false,
-                // arguments: null
-            // );
+            channel.QueueDeclare(
+                queue: queue,
+                durable: true,
+                exclusive: false,
+                autoDelete: false,
+                arguments: null
+            );
             
             EventingBasicConsumer consumer = new EventingBasicConsumer(channel);
             consumer.Received += (model, ea) =>
@@ -59,24 +59,27 @@ public class AMQP
                     IBasicProperties props = ea.BasicProperties;
                     string ReplyTo = props.IsReplyToPresent() ? props.ReplyTo : "";
                     string CorrelationId = props.IsCorrelationIdPresent() ? props.CorrelationId : "";
-                    IDictionary<string,dynamic> headers = props.IsHeadersPresent() ? props.Headers : new Dictionary<string,object>();
-                    string method = headers.ContainsKey("method") ? Encoding.UTF8.GetString(headers["method"]) : "";
-                    string rpc_id = headers.ContainsKey("rpc_id") ? Encoding.UTF8.GetString(headers["rpc_id"]) : "";
+                    IDictionary<string,dynamic> headers = props.IsHeadersPresent()
+						? props.Headers : new Dictionary<string,object>();
+                    string method = headers.ContainsKey("method")
+						? Encoding.UTF8.GetString(headers["method"]) : "";
+                    string rpc_id = headers.ContainsKey("rpc_id")
+						? Encoding.UTF8.GetString(headers["rpc_id"]) : "";
                     // key(user_hash) приходит из Body
                     Console.WriteLine(" method={0}, rpc_id={1}", method, rpc_id);
                     
                     dynamic request = JSON.Parse(message);
                     
                     //*** for testing ***
-                    if (method != "item_info")
-                    {
-                        System.Threading.Thread.Sleep(100);
-                        channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
-                        if (ea.DeliveryTag > 10) {
-                            Environment.Exit(0);
-                        }
-                        return;
-                    }
+                    // if (method != "item_info" && method != "search_item_name_h")
+                    // {
+                        // System.Threading.Thread.Sleep(100);
+                        // channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
+                        // if (ea.DeliveryTag > 10) {
+                            // Environment.Exit(0);
+                        // }
+                        // return;
+                    // }
                     //*******************
                     
                     channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
@@ -96,7 +99,7 @@ public class AMQP
                 }
                 catch (Exception e)
                 {
-                    dbg.f(e, "OnReceive_Exception");
+                    dbg.f(e, "Received_Exception");
                 }
             };            
             channel.BasicQos(prefetchSize: 0, prefetchCount: 1, global: false);
