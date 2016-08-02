@@ -268,6 +268,7 @@ public class AxCon
             else
             {
                 dynamic val = prms[param_name];
+                int iVal = 0;
                 DateTime dt = new DateTime();
                 string param_type = (!Util.IsNullOrEmptySubitem(param_config, "type"))
                     ? param_config["type"]
@@ -280,25 +281,34 @@ public class AxCon
                     ax_class_call(ax_class, param_config["setter"], val);
                     break;
                 case "real":
+                    float fVal;
                     if (val is string)
                     {
                         val = val.Replace(",", ".");
+                        if (Single.TryParse(val, out fVal))
+                        {
+                            ax_class_call(ax_class, param_config["setter"], fVal);
+                        }
                     }
-                    ax_class_call(ax_class, param_config["setter"], Convert.ToSingle(val));
                     break;
                 case "integer":
-                    ax_class_call(ax_class, param_config["setter"], Convert.ToInt32(val));
+                    if (val is string && Int32.TryParse(val, out iVal))
+                    {
+                        ax_class_call(ax_class, param_config["setter"], iVal);
+                    }
                     break;
                 case "boolean":
                     bool bVal;
-                    int iVal;
-                    if (Boolean.TryParse(val, out bVal)) // "true" or "false"
+                    if (val is string)
                     {
-                        ax_class_call(ax_class, param_config["setter"], bVal);
-                    }
-                    else if (Int32.TryParse(val, out iVal))
-                    {
-                        ax_class_call(ax_class, param_config["setter"], iVal != 0);
+                        if (Boolean.TryParse(val, out bVal)) // "true" or "false"
+                        {
+                            ax_class_call(ax_class, param_config["setter"], bVal);
+                        }
+                        else if (Int32.TryParse(val, out iVal))
+                        {
+                            ax_class_call(ax_class, param_config["setter"], iVal != 0);
+                        }
                     }
                     break;
                 case "date":
@@ -375,7 +385,7 @@ public class AxCon
                         ax_class_call(ax_class, param_config["setter"], fname);
                     break;
                 default:
-                    if (!Util.IsNullOrEmpty(val))
+                    if (val is string && !Util.IsNullOrEmpty(val))
                     {
                         val = value2enum(val, param_config["type"]);
                         ax_class_call(ax_class, param_config["setter"], val);
@@ -495,7 +505,11 @@ public class AxCon
                     }
                     break;
                 default:
-                    val = enum2value((int)ax_class_call(ax_class, param_config["getter"]), param_config["type"]);
+                    val = ax_class_call(ax_class, param_config["getter"]);
+                    if (val is int)
+                    {
+                        val = enum2value(val, param_config["type"]);
+                    }
                     break;
             }
             result.Add(param_name, val);
