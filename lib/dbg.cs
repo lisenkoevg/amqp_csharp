@@ -34,6 +34,17 @@ public class dbg
         }
     }
     
+    public static void fa(Object obj, string prefix = "")
+    {
+        string dir = "log";
+        Directory.CreateDirectory(dir);
+        string ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        using (StreamWriter writer = new StreamWriter(dir+"/main.log", true))
+        {
+            writer.WriteLine("{0};{1};{2}", ts, prefix, obj.ToString());
+        }
+    }
+    
     public static string dump(object obj, bool WriteOutput = true)
     {
         string result = "";

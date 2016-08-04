@@ -1,3 +1,5 @@
+#define AxMock
+
 using System;
 using System.Collections.Generic;
 
@@ -74,12 +76,19 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         {
             string result = "";
             foreach (var m in Axapta.methods_config) {
-                if (m.Value["class"] == Name)
+                if (m.Value["class"] == Name && m.Value.ContainsKey("output"))
                 {
                     foreach (var i in m.Value["output"])
                     {
                         if (i.ContainsKey("getter") && i["getter"] == method) {
-                            result = i["type"];
+                            if (i.ContainsKey("type"))
+                            {
+                                result = i["type"];
+                            }
+                            else
+                            {
+                                result = "string";
+                            }
                             break;
                         }
                     }
@@ -91,6 +100,9 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
                 || method == "nextLocation"
                 || method == "nextPrice"
                 || method == "nextPrognosis"
+                || method == "nextOutputLine"
+                || method == "nextOutputLineGroup"
+                || method == "nextLine"
                 || method == "getAnalogExists"
                 || method == "getQuotationOnly" 
                 || method == "getApplAreaMandatory"

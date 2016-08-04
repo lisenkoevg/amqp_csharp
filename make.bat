@@ -7,14 +7,16 @@ set path=c:\Windows\Microsoft.NET\Framework\v4.0.30319\;%path%
 if %userdomain% == 1810tz (
     set AxaptaMock=lib\AxMock.cs
     set AxaptaRef=
+    set define=/define:AxMock
 ) else (
     set AxaptaMock=
     set AxaptaRef=/r:"c:\Program Files\Microsoft Dynamics AX\40\Client\Bin\Microsoft.Dynamics.BusinessConnectorNet.dll"
+    set define=
 )
 
 set filelist=AMQP.cs lib\AxCon.cs lib\ConfigLoader.cs lib\Util.cs lib\dbg.cs %AxaptaMock%
 set ref=/r:RabbitMQ.Client.dll /r:YamlDotNet.dll /r:fastjson.dll %AxaptaRef%
-csc /nologo /lib:dll %filelist% /main:AMQP /d:DEBUG %ref%
+csc /nologo /lib:dll %filelist% /main:AMQP /d:DEBUG %define% %ref%
 
 
 :: for sending testing messages to RabbitMQ

@@ -25,7 +25,7 @@ class TestSend
             string method = "";
             string message = "{}";
             if (args.Length > 0) {
-                if (args[0] == "purge"){
+                if (args[0] == "purgeQueue"){
                     uint i = ch.QueuePurge("ax.test");
                     Console.WriteLine("{0} messages purged", i);
                     args[0] = "";

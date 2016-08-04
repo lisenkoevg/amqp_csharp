@@ -107,7 +107,6 @@ class ConfigLoader
                 {
                     foreach (string f in fields[a[i]["field"]].Keys)
                     {
-                        // Console.WriteLine("{0} {1}", f, fields[a[i]["field"]][f]);
                         if (!a[i].ContainsKey(f))
                         {
                             a[i].Add(f, fields[a[i]["field"]][f]);

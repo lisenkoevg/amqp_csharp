@@ -54,7 +54,6 @@ public class AMQP
             {
                 try{
                     string message = Encoding.UTF8.GetString(ea.Body);
-                    Console.Write("Received message={0}, ea.DeliveryTag={1}", message, ea.DeliveryTag);
                     
                     IBasicProperties props = ea.BasicProperties;
                     string ReplyTo = props.IsReplyToPresent() ? props.ReplyTo : "";
@@ -65,22 +64,8 @@ public class AMQP
 						? Encoding.UTF8.GetString(headers["method"]) : "";
                     string rpc_id = headers.ContainsKey("rpc_id")
 						? Encoding.UTF8.GetString(headers["rpc_id"]) : "";
-                    // key(user_hash) приходит из Body
-                    Console.WriteLine(" method={0}, rpc_id={1}", method, rpc_id);
                     
                     dynamic request = JSON.Parse(message);
-                    
-                    //*** for testing ***
-                    // if (method != "item_info" && method != "search_item_name_h")
-                    // {
-                        // System.Threading.Thread.Sleep(100);
-                        // channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
-                        // if (ea.DeliveryTag > 10) {
-                            // Environment.Exit(0);
-                        // }
-                        // return;
-                    // }
-                    //*******************
                     
                     channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
                     Dictionary<string,dynamic> responseObj = ax.request(method, request, rpc_id);
@@ -99,7 +84,7 @@ public class AMQP
                 }
                 catch (Exception e)
                 {
-                    dbg.f(e, "Received_Exception");
+                    dbg.fa(e, "Received_Exception");
                 }
             };            
             channel.BasicQos(prefetchSize: 0, prefetchCount: 1, global: false);

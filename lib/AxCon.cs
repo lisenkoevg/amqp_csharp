@@ -37,10 +37,12 @@ public class AxCon
     {
         ax_class_pool = new Dictionary<string,AxaptaObject>();
         
-        // add config for Axapta mock object
-        //ax = new Axapta(config["methods"]);
         ax = new Axapta();
         Logon();
+        
+        #if AxMock
+        ax = new Axapta(config["methods"]);
+        #endif
     }
     
     private void Logon()
@@ -123,7 +125,7 @@ public class AxCon
                 }
                 catch (AxWarning e)
                 {
-                    dbg.f(e, "request_AxWarning");
+                    dbg.fa(e, "request_AxWarning " + method);
                     dbg_("error", 
                         new Dictionary<string,dynamic>(){
                             {"message", e.Message},
@@ -138,7 +140,7 @@ public class AxCon
                 }
                 catch (AxException e)
                 {
-                    dbg.f(e, "request_AxWarning");
+                    dbg.fa(e, "request_AxWarning " + method);
                     dbg_("error", 
                         new Dictionary<string,string>(){
                             {"message", e.Message},
@@ -152,7 +154,7 @@ public class AxCon
                 }
                 catch (Exception e)
                 {
-                    dbg.f(e, "request_Exception");
+                    dbg.fa(e, "request_Exception " + method);
                     dbg_("fatal", 
                         new Dictionary<string,string>(){
                             {"message", e.Message},
@@ -198,7 +200,6 @@ public class AxCon
                 result = ax_class.Call(method);
                 break;
             case 1:
-//                Console.WriteLine("ax_class_call {0} {1}", method, prms[0]);
                 result = ax_class.Call(method, prms[0]);
                 break;
             case 2:
@@ -273,7 +274,6 @@ public class AxCon
                 string param_type = (!Util.IsNullOrEmptySubitem(param_config, "type"))
                     ? param_config["type"]
                     : "default";
-                //Console.WriteLine("{0} {1}", param_name, val.GetType().Name);
                 switch (param_type)
                 {
                 case "string":
@@ -416,20 +416,32 @@ public class AxCon
                     val = ax_class_call(ax_class, param_config["getter"]);
                     break;
                 case "real":
-                    val = (float)ax_class_call(ax_class, param_config["getter"]);
+                    float fVal = 0;
+                    val = ax_class_call(ax_class, param_config["getter"]);
+                    if (val is string && Single.TryParse(val, out fVal))
+                    {
+                        val = fVal;
+                    }
                     break;
                 case "integer":
-                    val = (int)ax_class_call(ax_class, param_config["getter"]);
+                    int iVal = 0;
+                    val = ax_class_call(ax_class, param_config["getter"]);
+                    if (val is string && Int32.TryParse(val, out iVal))
+                    {
+                        val = iVal;
+                    }
                     break;
                 case "boolean":
                     val = ax_class_call(ax_class, param_config["getter"]);
                     if (!(val is bool))
                     {
-                        Console.WriteLine("Wrong type declaration in config file: {0} is actually {1}", param_name, val.GetType().Name);
-                        dbg.f(string.Format("Wrong type declaration in config file: {0} is actually {1}", param_name, val.GetType().Name), "WrongConfig");
-                        val = (val != 0);
+                        var msg = string.Format("Type mismatch in config file: {0} is actually {1}", param_name, val.GetType().Name);
+                        // dbg.fa(msg, "TypeMismatch");
+                        if (val is int)
+                        {
+                            val = (val != 0);
+                        }
                     }
-                    val = (bool)val;
                     break;
                 case "date":
                     val = ax_class_call(ax_class, param_config["getter"]);
@@ -453,7 +465,6 @@ public class AxCon
                         val = "";
                     }
                     break;
-
                 case "array":
                     val = new List<object>();
                     while ((bool)ax_class_call(ax_class, param_config["iterator"]))
@@ -561,3 +572,4 @@ public class AxCon
     }
 
 }
+
