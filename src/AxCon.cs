@@ -26,10 +26,24 @@ public class AxCon
     private Dictionary<string,dynamic> config;
     private Dictionary<string,AxaptaObject> ax_class_pool;
     private string client_id;
-
-    public AxCon(Dictionary<string,dynamic> config)
+    private int AMQPNo;
+    
+    public int err_count = 0;
+    public int msg_count = 0;
+    public bool is_requesting = false;
+    public DateTime last_request_starttime;
+    public string last_method;
+    
+    public TimeSpan longest_method_duration = new TimeSpan();
+    public string longest_method = "";
+    
+    private static string log_dir = "log";
+    private object lockOn = new object();
+    
+    public AxCon(Dictionary<string,dynamic> config, int AMQPNo)
     {
         this.config = config;
+        this.AMQPNo = AMQPNo;
         init();
     }
     
@@ -48,6 +62,11 @@ public class AxCon
     private void Logon()
     {
         ax.Logon("rba", "ru", "192.168.3.120:2714", "");
+    }
+
+    public void Logoff()
+    {
+        ax.Logoff();
     }
 
     public Dictionary<string,object> request(string method, Dictionary<string,dynamic> prms, string id = "")
@@ -122,10 +141,10 @@ public class AxCon
                         };
                         response["result"] = null;
                     }
+                    msg_count++;
                 }
                 catch (AxWarning e)
                 {
-                    dbg.fa(e, "request_AxWarning " + method);
                     dbg_("error", 
                         new Dictionary<string,dynamic>(){
                             {"message", e.Message},
@@ -137,10 +156,10 @@ public class AxCon
                     );
                     response["error"] = new Dictionary<string,string>(){{"message", e.Message}};
                     response["result"] = null;
+                    err_count++;
                 }
                 catch (AxException e)
                 {
-                    dbg.fa(e, "request_AxWarning " + method);
                     dbg_("error", 
                         new Dictionary<string,string>(){
                             {"message", e.Message},
@@ -151,10 +170,10 @@ public class AxCon
                     );
                     response["error"] = new Dictionary<string,string>(){{"message", e.Message}};
                     response["result"] = null;
+                    err_count++;
                 }
                 catch (Exception e)
                 {
-                    dbg.fa(e, "request_Exception " + method);
                     dbg_("fatal", 
                         new Dictionary<string,string>(){
                             {"message", e.Message},
@@ -165,6 +184,7 @@ public class AxCon
                     );
                     response["error"] = new Dictionary<string,string>(){{"message", "fatal error"}};
                     response["result"] = null;
+                    err_count++;
                     reload();
                 }
                 break;
@@ -193,6 +213,9 @@ public class AxCon
 
     private object ax_class_call(AxaptaObject ax_class, string method, params dynamic[] prms)
     {
+        last_request_starttime = DateTime.Now;
+        last_method = GetKeyByValue(ax_class, ax_class_pool);
+        is_requesting = true;
         object result;
         switch (prms.Length)
         {
@@ -208,6 +231,14 @@ public class AxCon
             default:
                 throw new AxException("invalid axapta method call");
         }
+        
+        TimeSpan last_method_duration = DateTime.Now - last_request_starttime;
+        if (longest_method == "" || last_method_duration > longest_method_duration)
+        {
+            longest_method = last_method;
+            longest_method_duration = last_method_duration;
+        }
+        is_requesting = false;
         return result;
     }
 
@@ -540,20 +571,35 @@ public class AxCon
         }
         Logon();
     }
-
-    private void dbg_(string type, dynamic a = null, bool fatal = false)
+    
+    private string GetKeyByValue(AxaptaObject val, Dictionary<string,AxaptaObject> dict)
+    {
+        string result = "";
+        foreach (var i in dict)
+        {
+            if (i.Value == val)
+            {
+                result = i.Key;
+                break;
+            }
+        }
+        return result;
+    }
+    
+    private void dbg_(string type, dynamic a, bool fatal = false)
     {
         JSONParameters prms = new JSONParameters();
         prms.UseEscapedUnicode = false;
-        string dt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        if (a != null)
+        // string dt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        // Console.WriteLine("{0};{1};{2}", dt, type, JSON.ToNiceJSON(a, prms));
+        
+        var suf = "";
+        if (type != "request" && type != "response")
         {
-            Console.WriteLine("{0};{1};{2}", dt, type, JSON.ToNiceJSON(a, prms));
+            suf = "err";
         }
-        else
-        {
-            Console.WriteLine("{0};{1}", dt, type);
-        }
+        
+        log(string.Format("{0};{1}", type, JSON.ToNiceJSON(a, prms)), suf);
         if (fatal)
         {
             if (!Util.IsNullOrEmpty(config["settings"]["mail_alerts"]))
@@ -570,6 +616,17 @@ public class AxCon
             }
         }
     }
-
+    
+    // TODO combine with AMQP.log()
+    private void log(object obj, string suf = "")
+    {
+        string basename = "axcon";
+        suf = suf != "" ? "_" + suf : "";
+        string file_name = basename + AMQPNo + suf;
+        string ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        using (StreamWriter writer = new StreamWriter(log_dir + "/" + file_name + ".log", true))
+        {
+            writer.WriteLine("{0};{1}", ts, obj.ToString());
+        }
+    }
 }
-

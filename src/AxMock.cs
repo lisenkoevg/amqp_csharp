@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
 
 namespace Microsoft.Dynamics.BusinessConnectorNet {
     class Axapta {
@@ -24,6 +25,8 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         {
             return new AxaptaObject(objName);
         }
+        public void Dispose()
+        {}
     }
     
     class AxaptaObject
@@ -34,9 +37,9 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         {
             Name = objName;
         }
-        
-        public dynamic Call(string method, params string[] prms)
+        public dynamic Call(string method, params dynamic[] prms)
         {
+            Thread.Sleep(100);
             dynamic result = "";
             var outTypeName = GetOutputValueTypeName(method);
             // Console.WriteLine("{0}:{1}:{2}", Name, method, outTypeName);
@@ -70,6 +73,11 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
                     break;
             }
             return result;
+        }
+        
+        public dynamic Call(string method)
+        {
+            return Call(method, null);
         }
         
         public string GetOutputValueTypeName(string method)
@@ -116,5 +124,8 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
             }
             return result;
         }
+        
+        public void Dispose()
+        {}
     }
 }

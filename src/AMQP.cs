@@ -7,29 +7,46 @@ using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using fastJSON;
 using System.Diagnostics;
+using System.Threading;
 
 public class AMQP
 {
+    public Thread thrd;
+    public bool isRunning = true;
+    public int AMQPNo;
+    public DateTime startTime = DateTime.Now;
+    public int err_count = 0;
+    public int msg_count = 0;
+    
     private AxCon ax;
-    private String queue;
-    private Dictionary<string,dynamic> config;
-
-    public static void Main(string[] args)
-    {
-        var amqp = new AMQP();
-        amqp.Work();
-    }
-
+    private object lockOn = new Object();
+    
+    private static String queue = "ax.test";
+    private static Dictionary<string,dynamic> config = ConfigLoader.Load("./config");
+    private static int _AMQPNo = 1;
+    private static string log_dir = "log";
+    
     public AMQP()
     {
+        Directory.CreateDirectory(log_dir);
         ChDir();
-        queue = "ax.test";
-        config = ConfigLoader.Load("./config");
+        SetNo();
+        thrd = new Thread(this.Work);
+        thrd.Start();
     }
-
-    public void Work()
+    
+    private void SetNo()
     {
-        ax = new AxCon(config);
+        lock(lockOn)
+        {
+            AMQPNo = _AMQPNo;
+            _AMQPNo++;
+        }
+    }
+    
+    private void Work()
+    {
+        ax = new AxCon(config, AMQPNo);
         
         ConnectionFactory factory = new ConnectionFactory() {
             HostName = config["settings"]["amqp"]["host"],
@@ -70,6 +87,7 @@ public class AMQP
                     channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
                     Dictionary<string,dynamic> responseObj = ax.request(method, request, rpc_id);
                     string response = JSON.ToJSON(responseObj);
+                    msg_count++;
                     if (ReplyTo != "" && CorrelationId != "")
                     {
                         props = channel.CreateBasicProperties();
@@ -84,7 +102,8 @@ public class AMQP
                 }
                 catch (Exception e)
                 {
-                    dbg.fa(e, "Received_Exception");
+                    log(e, "err");
+                    err_count++;
                 }
             };            
             channel.BasicQos(prefetchSize: 0, prefetchCount: 1, global: false);
@@ -93,10 +112,11 @@ public class AMQP
                 noAck: false,
                 consumer: consumer
             );
-            
-            // System.Threading.Thread.Sleep(10000);
-            Console.WriteLine("Waiting for messages... Press [enter] to exit.");
-            Console.ReadLine();
+            while (isRunning)
+            {
+                Thread.Sleep(1000);
+            }
+            ax.Logoff();
         }
     }
 
@@ -105,5 +125,48 @@ public class AMQP
         String path = System.Reflection.Assembly.GetExecutingAssembly().CodeBase;
         String directory = System.IO.Path.GetDirectoryName(path).Replace("file:\\", "");
         Environment.CurrentDirectory = directory;        
+    }
+    
+    public int GetAxErrCount()
+    {
+        return ax.err_count;
+    }
+    public int GetAxMsgCount()
+    {
+        return ax.msg_count;
+    }
+    public bool GetIsAxRequesting()
+    {
+        return ax.is_requesting;
+    }
+    public DateTime GetLastReqStartTime()
+    {
+        return ax.last_request_starttime;
+    }
+    public string GetLastMethod()
+    {
+        return ax.last_method;
+    }
+    public string GetLongestMethod()
+    {
+        return ax.longest_method;
+    }
+    public bool IsAxReady()
+    {
+        return ax != null;
+    }
+    
+    // TODO combine with AxCon.log()
+    private void log(object obj, string suf = "")
+    {
+        string basename = "amqp";
+        suf = suf != "" ? "_" + suf : "";
+        string file_name = basename + AMQPNo + suf;
+        string ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        using (StreamWriter writer = new StreamWriter(log_dir + "/" + file_name + ".log", true))
+        {
+            writer.WriteLine("{0};{1}", ts, obj.ToString());
+        }
+
     }
 }

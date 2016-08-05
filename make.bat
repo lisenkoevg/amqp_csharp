@@ -1,11 +1,11 @@
 @echo off
 if exist amqp.exe del amqp.exe
+if exist amqpmanager.exe del amqpmanager.exe
 
-set path=c:\Windows\Microsoft.NET\Framework\v4.0.30319\;%path%
-:: set path=c:\Windows\Microsoft.NET\Framework64\v3.5\;%path%
+set path | find /i "Microsoft.NET\Framework\v4.0.30319" > nul || set path=c:\Windows\Microsoft.NET\Framework\v4.0.30319\;%path%
 
 if %userdomain% == 1810tz (
-    set AxaptaMock=lib\AxMock.cs
+    set AxaptaMock=src\AxMock.cs
     set AxaptaRef=
     set define=/define:AxMock
 ) else (
@@ -14,14 +14,14 @@ if %userdomain% == 1810tz (
     set define=
 )
 
-set filelist=AMQP.cs lib\AxCon.cs lib\ConfigLoader.cs lib\Util.cs lib\dbg.cs %AxaptaMock%
+set filelist=src\AMQP.cs src\AMQPManager.cs src\AxCon.cs src\ConfigLoader.cs src\Util.cs src\dbg.cs %AxaptaMock%
 set ref=/r:RabbitMQ.Client.dll /r:YamlDotNet.dll /r:fastjson.dll %AxaptaRef%
-csc /nologo /lib:dll %filelist% /main:AMQP /d:DEBUG %define% %ref%
+csc /nologo /out:AMQPManager.exe /main:AMQPManager %filelist% /lib:dll %define% %ref% /d:DEBUG
 
 
 :: for sending testing messages to RabbitMQ
 if exist testSend.exe del testSend.exe
-csc /nologo /lib:dll testSend.cs lib\ConfigLoader.cs lib\Util.cs lib\dbg.cs /main:TestSend %ref%
+csc /nologo /main:TestSend testSend\testSend.cs src\ConfigLoader.cs src\Util.cs src\dbg.cs /lib:dll %ref%
 
 :: build fastjson
 :: @csc /t:library /out:fastjson.dll /recurse:*.cs

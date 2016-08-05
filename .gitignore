@@ -2,3 +2,4 @@ log/
 dll/
 config/
 *.exe
+user_hash.txt
