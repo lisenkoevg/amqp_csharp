@@ -12,19 +12,25 @@ using System.Threading;
 public class AMQP
 {
     public Thread thrd;
-    public bool isRunning = true;
-    public int AMQPNo;
-    public DateTime startTime = DateTime.Now;
+    public int AMQP_no;
+    public bool is_stop_pend = false;
+    private bool is_processing = false;
+    public DateTime start_time = DateTime.Now;
     public int err_count = 0;
     public int msg_count = 0;
     
-    private AxCon ax;
-    private object lockOn = new Object();
+    public delegate void AMQPEventHandler(AMQP a);
+    public event AMQPEventHandler Stop;
     
-    private static String queue = "ax.test";
-    private static Dictionary<string,dynamic> config = ConfigLoader.Load("./config");
-    private static int _AMQPNo = 1;
-    private static string log_dir = "log";
+    private AxCon ax;
+    private static object lockOn = new Object();
+    
+    private static readonly String queue = "ax.test";
+    private static readonly string log_dir = "log";
+    private static readonly Dictionary<string,dynamic> config = ConfigLoader.Load("./config");
+    private static int _AMQP_no = 1;
+    
+    public static uint msgInQueue;
     
     public AMQP()
     {
@@ -39,14 +45,14 @@ public class AMQP
     {
         lock(lockOn)
         {
-            AMQPNo = _AMQPNo;
-            _AMQPNo++;
+            AMQP_no = _AMQP_no;
+            _AMQP_no++;
         }
     }
     
     private void Work()
     {
-        ax = new AxCon(config, AMQPNo);
+        ax = new AxCon(config, AMQP_no);
         
         ConnectionFactory factory = new ConnectionFactory() {
             HostName = config["settings"]["amqp"]["host"],
@@ -67,9 +73,11 @@ public class AMQP
             );
             
             EventingBasicConsumer consumer = new EventingBasicConsumer(channel);
-            consumer.Received += (model, ea) =>
+            EventHandler<BasicDeliverEventArgs> receiveHandler = (model, ea) =>
             {
-                try{
+                is_processing = true;
+                try
+                {
                     string message = Encoding.UTF8.GetString(ea.Body);
                     
                     IBasicProperties props = ea.BasicProperties;
@@ -99,24 +107,35 @@ public class AMQP
                             body: Encoding.UTF8.GetBytes(response)
                         );
                     }
+                    msgInQueue = channel.MessageCount(queue);
                 }
                 catch (Exception e)
                 {
                     log(e, "err");
                     err_count++;
                 }
-            };            
+                is_processing = false;
+            };
+            consumer.Received += receiveHandler;
             channel.BasicQos(prefetchSize: 0, prefetchCount: 1, global: false);
             channel.BasicConsume(
                 queue: queue,
                 noAck: false,
                 consumer: consumer
             );
-            while (isRunning)
+            while (!is_stop_pend || is_processing)
             {
+                if (is_stop_pend)
+                {
+                    consumer.Received -= receiveHandler;
+                }
                 Thread.Sleep(1000);
             }
             ax.Logoff();
+        }
+        if (Stop != null)
+        {
+            Stop(this);
         }
     }
 
@@ -126,7 +145,10 @@ public class AMQP
         String directory = System.IO.Path.GetDirectoryName(path).Replace("file:\\", "");
         Environment.CurrentDirectory = directory;        
     }
-    
+    public bool IsAxReady()
+    {
+        return ax != null;
+    }
     public int GetAxErrCount()
     {
         return ax.err_count;
@@ -151,17 +173,13 @@ public class AMQP
     {
         return ax.longest_method;
     }
-    public bool IsAxReady()
-    {
-        return ax != null;
-    }
     
     // TODO combine with AxCon.log()
     private void log(object obj, string suf = "")
     {
         string basename = "amqp";
         suf = suf != "" ? "_" + suf : "";
-        string file_name = basename + AMQPNo + suf;
+        string file_name = basename + AMQP_no + suf;
         string ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         using (StreamWriter writer = new StreamWriter(log_dir + "/" + file_name + ".log", true))
         {

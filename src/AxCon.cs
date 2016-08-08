@@ -26,7 +26,7 @@ public class AxCon
     private Dictionary<string,dynamic> config;
     private Dictionary<string,AxaptaObject> ax_class_pool;
     private string client_id;
-    private int AMQPNo;
+    private int AMQP_no;
     
     public int err_count = 0;
     public int msg_count = 0;
@@ -38,12 +38,12 @@ public class AxCon
     public string longest_method = "";
     
     private static string log_dir = "log";
-    private object lockOn = new object();
+    private static object lockOn = new object();
     
-    public AxCon(Dictionary<string,dynamic> config, int AMQPNo)
+    public AxCon(Dictionary<string,dynamic> config, int AMQP_no)
     {
         this.config = config;
-        this.AMQPNo = AMQPNo;
+        this.AMQP_no = AMQP_no;
         init();
     }
     
@@ -61,12 +61,28 @@ public class AxCon
     
     private void Logon()
     {
-        ax.Logon("rba", "ru", "192.168.3.120:2714", "");
+        lock (lockOn)
+        {
+            ax.Logon("rba", "ru", "192.168.3.120:2714", "");
+        }
     }
 
     public void Logoff()
     {
         ax.Logoff();
+    }
+    
+    private void Reload()
+    {
+        ax_class_pool = new Dictionary<string,AxaptaObject>();
+        try
+        {
+            Logoff();
+        } catch
+        {
+            ax = new Axapta();
+        }
+        Logon();
     }
 
     public Dictionary<string,object> request(string method, Dictionary<string,dynamic> prms, string id = "")
@@ -74,7 +90,6 @@ public class AxCon
         Stopwatch stopWatch = new Stopwatch();
         stopWatch.Start();
                 
-        long start_ticks = DateTime.Now.Ticks;
         client_id = null;
         
         Dictionary<string, dynamic> request = new Dictionary<string, object>() {
@@ -145,6 +160,7 @@ public class AxCon
                 }
                 catch (AxWarning e)
                 {
+                    lock(lockOn) dbg.fa(string.Format("AxWarning, {0}", e));
                     dbg_("error", 
                         new Dictionary<string,dynamic>(){
                             {"message", e.Message},
@@ -160,6 +176,7 @@ public class AxCon
                 }
                 catch (AxException e)
                 {
+                    lock(lockOn) dbg.fa(string.Format("AxException, {0}", e));
                     dbg_("error", 
                         new Dictionary<string,string>(){
                             {"message", e.Message},
@@ -174,6 +191,7 @@ public class AxCon
                 }
                 catch (Exception e)
                 {
+                    lock(lockOn) dbg.fa(string.Format("Exception fatal, {0}", e));
                     dbg_("fatal", 
                         new Dictionary<string,string>(){
                             {"message", e.Message},
@@ -185,7 +203,7 @@ public class AxCon
                     response["error"] = new Dictionary<string,string>(){{"message", "fatal error"}};
                     response["result"] = null;
                     err_count++;
-                    reload();
+                    Reload();
                 }
                 break;
         }
@@ -559,19 +577,6 @@ public class AxCon
         return result;
     }
     
-    private void reload()
-    {
-        ax_class_pool = new Dictionary<string,AxaptaObject>();
-        try
-        {
-            ax.Logoff();
-        } catch
-        {
-            ax = new Axapta();
-        }
-        Logon();
-    }
-    
     private string GetKeyByValue(AxaptaObject val, Dictionary<string,AxaptaObject> dict)
     {
         string result = "";
@@ -622,7 +627,7 @@ public class AxCon
     {
         string basename = "axcon";
         suf = suf != "" ? "_" + suf : "";
-        string file_name = basename + AMQPNo + suf;
+        string file_name = basename + AMQP_no + suf;
         string ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         using (StreamWriter writer = new StreamWriter(log_dir + "/" + file_name + ".log", true))
         {
