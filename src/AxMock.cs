@@ -128,4 +128,11 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         public void Dispose()
         {}
     }
+    
+    class ServerUnavailableException : Exception
+    {
+    }
+    class SessionTerminatedException : Exception
+    {
+    }
 }

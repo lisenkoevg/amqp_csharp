@@ -12,17 +12,19 @@ public class AMQPManager
     private Thread thrd;
     
     private Process cur_proc = Process.GetCurrentProcess();
-    private bool is_receive_input = true;
+    private bool is_receive_commands = true;
+    private bool output_paused = false;
     private string user_input = "";
     
     private static readonly int worker_max_count = 30;
-    private int refresh_period = 1000;
+    private readonly int fatal_err_threshold = 5;
+    private int refresh_period = 500;
     private int input_poll_period = 300;
     private readonly DateTime start_time = DateTime.Now;
     private readonly bool is_console_available;
     private StringBuilder output = new StringBuilder();
-    
     private Dictionary<int,Dictionary<string,int>> stat = new Dictionary<int,Dictionary<string,int>>();
+    private int fatal_err_count;
     
     public static void Main(string[] args)
     {
@@ -47,27 +49,26 @@ public class AMQPManager
         thrd = new Thread(Work);
         thrd.Start(count);
         
-        // TODO: events or timer
-        while (worker_count == 0) Thread.Sleep(100);
-        while (worker_count > 0)
+        do
         {
-            Print();
-            // TODO: events or timer
+            if (!output_paused) Print();
+            // TODO: add Timer
             Thread.Sleep(refresh_period);
         }
+        while (worker_count > 0);
         Print();
     }
     
     private void Work(object count)
     {
         AddWorkers((int)count);
-        while (is_receive_input)
+        while (is_receive_commands)
         {
             if (is_console_available && Console.KeyAvailable) {
                 ConsoleKeyInfo ki = Console.ReadKey(true);
                 HandleInput(ki);
             }
-            // TODO: events or timer
+            // TODO: add Timer
             Thread.Sleep(input_poll_period);
         }
     }
@@ -85,7 +86,8 @@ public class AMQPManager
         if (GetRunningWorkerCount() < worker_max_count)
         {
             var amqp = new AMQP();
-            amqp.Stop += DeleteWorker;
+            amqp.OnStop += DeleteWorker;
+            amqp.OnFatalError += FatalErrorHandler;
             worker_list.Add(amqp);
             worker_count++;
         }
@@ -96,16 +98,37 @@ public class AMQPManager
         worker_list.Remove(a);
         worker_count--;
     }
-
-    private void StopWorker(bool stopAll = false)
+    
+    private void FatalErrorHandler(AMQP a)
+    {
+        fatal_err_count++;
+        if (fatal_err_count < fatal_err_threshold)
+        {
+            AddWorker();
+        }
+        else
+        {
+            is_receive_commands = false;
+        }
+    }
+    
+    private void StopWorker()
     {
         foreach (var w in worker_list)
         {
             if (!w.is_stop_pend)
             {
                 w.is_stop_pend = true;
-                if (!stopAll) break;
+                break;
             }
+        }
+    }
+    
+    private void StopAllWorkers()
+    {
+        foreach (var w in worker_list)
+        {
+            w.is_stop_pend = true;
         }
     }
     
@@ -124,7 +147,7 @@ public class AMQPManager
     private void RestartWorkers()
     {
         int cur_worker_count = GetRunningWorkerCount();
-        StopWorker(stopAll: true);
+        StopAllWorkers();
         AddWorkers(cur_worker_count);
     }
     
@@ -142,6 +165,10 @@ public class AMQPManager
     {
         string keyChar = ki.KeyChar.ToString();
         string keyStr = ki.Key.ToString();
+        if (output_paused && keyStr != "Spacebar")
+        {
+            return;
+        }
         if (user_input == "")
         {
             switch (keyStr)
@@ -156,6 +183,9 @@ public class AMQPManager
                     {
                         ExecuteCommand(keyStr);
                     }
+                    break;
+                case "Spacebar":
+                    ToggleOutputPaused();
                     break;
                 default:
                     if (Regex.IsMatch(keyChar, "[0-9a-zA-Z]"))
@@ -175,6 +205,9 @@ public class AMQPManager
                     break;
                 case "Backspace":
                     user_input = user_input.Remove(user_input.Length-1);
+                    break;
+                case "Spacebar":
+                    ToggleOutputPaused();
                     break;
                 default:
                     if (ki.Key == ConsoleKey.Escape){
@@ -200,21 +233,20 @@ public class AMQPManager
             {
                 case "A":
                     AddWorker();
-                    is_receive_input = true;
                     break;
                 case "D":
                     StopWorker();
                     if (GetRunningWorkerCount() == 0)
                     {
-                        is_receive_input = false;
+                        is_receive_commands = false;
                     }
                     break;
                 case "R":
                     RestartWorkers();
                     break;
                 case "Q":
-                    StopWorker(stopAll: true);
-                    is_receive_input = false;
+                    StopAllWorkers();
+                    is_receive_commands = false;
                     break;
                 default:
                     if (Regex.IsMatch(cmd, @"\d+D"))
@@ -223,13 +255,22 @@ public class AMQPManager
                         StopWorkerByNo(no);
                         if (GetRunningWorkerCount() == 0)
                         {
-                            is_receive_input = false;
+                            is_receive_commands = false;
                         }
-
                     }
                     break;
             }
         }
+    }
+    
+    private void ToggleOutputPaused()
+    {
+        string cap = "(paused) ";
+        output_paused = !output_paused;
+        if (output_paused)
+            Console.Title = cap + Console.Title;
+        else
+            Console.Title = Console.Title.Replace(cap, "");
     }
     
     private void Print()
@@ -240,7 +281,8 @@ public class AMQPManager
         }
         var heap_mem = GC.GetTotalMemory(false);
         output.Clear();
-        string tmpl = "{0,3} {1,-20} {2,5} {3,6} {4,5} {5,6} {6,6} {7,9} {8,7:0.0} {9,-20} {10,-20} {11,11} {0,3}";
+        string tmpl = "{0,3} {1,-19} {13,-9} {6,-6} {2,5} {4,5} {3,6} {5,6} {7,-5} {8,-6} {9,9} {10,7} {11,-20} {12,-20} {0,3}";
+        
         string head = string.Format(
             tmpl,
             "no",
@@ -249,6 +291,8 @@ public class AMQPManager
             "ax_msg",
             "a_err",
             "ax_err",
+            "a_proc",
+            "ax_lo",
             "ax_req",
             "req_start",
             "req_dur",
@@ -261,33 +305,30 @@ public class AMQPManager
         for (int i = 0; i < worker_list.Count; i++)
         {
             var amqp = worker_list[i];
-            if (!amqp.IsAxReady()) continue;
-            int amqp_msg_count = amqp.msg_count;
-            int ax_msg_count = amqp.GetAxMsgCount();
-            int amqp_err_count = amqp.err_count;
-            int ax_err_count = amqp.GetAxErrCount();
-
-            double current_req_duration = System.Math.Round((DateTime.Now - amqp.GetLastReqStartTime()).TotalMilliseconds/1000, 1);
+            var ax_info = amqp.GetAxInfo();
+            double current_req_duration = System.Math.Round((DateTime.Now - ax_info["last_request_starttime"]).TotalMilliseconds/1000, 1);
             output.AppendLine(string.Format(
                 tmpl,
                 amqp.AMQP_no,
                 amqp.start_time,
-                amqp_msg_count,
-                ax_msg_count,
-                amqp_err_count,
-                ax_err_count,
-                amqp.GetIsAxRequesting() ? "yes" : "",
-                amqp.GetLastReqStartTime().ToString("HH:mm:ss"),
-                amqp.GetIsAxRequesting() && current_req_duration > 0 ? current_req_duration.ToString() : "",
-                amqp.GetIsAxRequesting() ? amqp.GetLastMethod().Replace("cmpECommerce", "").Trim('_') : "",
-                amqp.GetLongestMethod().Replace("cmpECommerce", "").Trim('_'),
+                amqp.msg_count,
+                ax_info["msg_count"],
+                amqp.err_count,
+                ax_info["err_count"],
+                amqp.IsProcessing() ? "yes" : "",
+                ax_info["is_logged_on"] ? "yes" : "",
+                ax_info["is_requesting"] ? "yes" : "",
+                ax_info["last_request_starttime"] != default(DateTime) ? ax_info["last_request_starttime"].ToString("HH:mm:ss") : "",
+                ax_info["is_requesting"] && current_req_duration > 0 ? current_req_duration.ToString("0.0") : "",
+                ax_info["is_requesting"] ? ax_info["last_method"].Replace("cmpECommerce", "").Trim('_') : "",
+                ax_info["longest_method"].Replace("cmpECommerce", "").Trim('_'),
                 amqp.is_stop_pend ? "stop_pend" : "running"
             ));
         }
         SaveStat();
         var total = CalcTotalStat();
         output.AppendLine(string.Format(
-            "\nSummary: amqp_msg={0} ax_msg={1} amqp_err={2} ax_err={3} workers={4} heap={5}MB private={6}MB msgInQueue={7}",
+            "\nSummary: amqp_msg={0} ax_msg={1} amqp_err={2} ax_err={3} workers={4} heap={5:0.0}MB private={6:0.0}MB msgInQueue={7} fatal_err={8}",
             total["amqp_msg_count"],
             total["ax_msg_count"],
             total["amqp_err_count"],
@@ -295,7 +336,8 @@ public class AMQPManager
             worker_count,
             System.Math.Round(Convert.ToSingle(heap_mem) / 1024 / 1024, 1),
             System.Math.Round(Convert.ToSingle(cur_proc.PrivateMemorySize64) / 1024 / 1024, 1),
-            AMQP.msgInQueue.ToString()
+            AMQP.msgInQueue.ToString(),
+            fatal_err_count
         ));
         output.AppendLine(string.Format(
             @"Refresh period: {0}s, running: {1:d\.hh\:mm\:ss}",
@@ -303,7 +345,7 @@ public class AMQPManager
             (DateTime.Now - start_time))
         );
         output.AppendLine("\n?: a: start new worker, [No]d: stop worker [by No], Ctrl-r: restart all workers, Ctrl-q: stop all workers and exit");
-        output.AppendLine("Ctrl-C: force exit");
+        output.AppendLine("Space: pause, Ctrl-C: force exit");
         Console.Clear();
         Console.Write(output.ToString());
         Console.Write(user_input);
@@ -314,7 +356,6 @@ public class AMQPManager
         for (int i = 0; i < worker_list.Count; i++)
         {
             var amqp = worker_list[i];
-            if (!amqp.IsAxReady()) continue;
             if (!stat.ContainsKey(amqp.AMQP_no))
             {
                 stat.Add(
@@ -327,10 +368,11 @@ public class AMQPManager
                     }
                  );
             }
+            var ax_info = amqp.GetAxInfo();
             stat[amqp.AMQP_no]["amqp_msg_count"] = amqp.msg_count;
-            stat[amqp.AMQP_no]["ax_msg_count"] = amqp.GetAxMsgCount();
+            stat[amqp.AMQP_no]["ax_msg_count"] = ax_info["msg_count"];
             stat[amqp.AMQP_no]["amqp_err_count"] = amqp.err_count;
-            stat[amqp.AMQP_no]["ax_err_count"] = amqp.GetAxErrCount();
+            stat[amqp.AMQP_no]["ax_err_count"] = ax_info["err_count"];
         }
     }
     

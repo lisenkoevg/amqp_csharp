@@ -4,9 +4,12 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using fastJSON;
+using System.Threading;
 
 public class dbg
 {
+    public static object lock_on = new object();
+    
     public static void w(Object obj)
     {
         Console.WriteLine(obj);
@@ -27,21 +30,27 @@ public class dbg
         Directory.CreateDirectory(dir);
         string ts = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         prefix = prefix == "" ? prefix : prefix + "_";
-        if (File.Exists(dir+"/" + prefix + ts + "_" + Convert.ToString(suf) + ".txt")) suf++; else suf = 1;
-        using (StreamWriter writer = File.CreateText(dir+"/" + prefix + ts + "_" + Convert.ToString(suf) + ".txt"))
+        lock (lock_on)
         {
-            writer.WriteLine(obj.ToString());
+            if (File.Exists(dir+"/" + prefix + ts + "_" + Convert.ToString(suf) + ".txt")) suf++; else suf = 1;
+            using (StreamWriter writer = File.CreateText(dir+"/" + prefix + ts + "_" + Convert.ToString(suf) + ".txt"))
+            {
+                writer.WriteLine(obj.ToString());
+            }
         }
     }
     
-    public static void fa(Object obj, string prefix = "")
+    public static void fa(Object obj)
     {
         string dir = "log";
         Directory.CreateDirectory(dir);
         string ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        using (StreamWriter writer = new StreamWriter(dir+"/main.log", true))
+        lock (lock_on)
         {
-            writer.WriteLine("{0};{1};{2}", ts, prefix, obj.ToString());
+            using (StreamWriter writer = new StreamWriter(dir+"/debug.log", true))
+            {
+                writer.WriteLine("{0};{1};{2}", ts, Thread.CurrentThread.ManagedThreadId, obj.ToString());
+            }
         }
     }
     
