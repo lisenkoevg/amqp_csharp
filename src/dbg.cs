@@ -15,6 +15,11 @@ public class dbg
         Console.WriteLine(obj);
     }
     
+    public static void ww(Object obj)
+    {
+        Console.WriteLine("{0} {1} {2}", DateTime.Now.ToString("mm:ss"), Thread.CurrentThread.ManagedThreadId, obj);
+    }
+    
     public static void wt(Object obj)
     {
         if (obj != null)

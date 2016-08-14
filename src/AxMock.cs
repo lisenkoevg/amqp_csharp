@@ -15,6 +15,8 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
        
         public bool Logon(string str1, string str2, string str3, string str4)
         {
+            var rand = new Random();
+            Thread.Sleep(1000 * rand.Next(0,2));
             return true;
         }
         public bool Logoff()
@@ -39,7 +41,11 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         }
         public dynamic Call(string method, params dynamic[] prms)
         {
-            Thread.Sleep(100);
+            if (method == "run")
+            {
+                var rnd = new Random();
+                Thread.Sleep(100 * rnd.Next(0, 20));
+            }
             dynamic result = "";
             var outTypeName = GetOutputValueTypeName(method);
             // Console.WriteLine("{0}:{1}:{2}", Name, method, outTypeName);

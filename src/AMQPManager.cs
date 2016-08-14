@@ -3,74 +3,133 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Linq;
 using System.Diagnostics;
+using System.IO;
+using fastJSON;
 
 public class AMQPManager
 {
-    private List<AMQP> worker_list = new List<AMQP>();
-    private int worker_count;
-    private Thread thrd;
-    
-    private Process cur_proc = Process.GetCurrentProcess();
-    private bool is_receive_commands = true;
-    private bool output_paused = false;
-    private string user_input = "";
-    
-    private static readonly int worker_max_count = 30;
-    private readonly int fatal_err_threshold = 5;
-    private int refresh_period = 500;
-    private int input_poll_period = 300;
-    private readonly DateTime start_time = DateTime.Now;
-    private readonly bool is_console_available;
-    private StringBuilder output = new StringBuilder();
+    private int _workerId = 0;
+    private int maxWorkersCount = 30;
+    private int amqpInitTimeout = 10000;
+    private int axconInitTimeout = 20000;
+    private int axconRequestTimeout = 30000;
+    private int startupWorkersCount;
+    private readonly Process cur_proc = Process.GetCurrentProcess();
+    private readonly Dictionary<string,dynamic> config = ConfigLoader.Load("./config");
+    private readonly int fatalErrorThreshold = 5;
+    private readonly DateTime startTime = DateTime.Now;
+    private readonly bool isConsoleAvailable;
+    private Dictionary<int, AMQP> amqpDic = new Dictionary<int, AMQP>();
+    private Dictionary<int, AxCon> axconDic = new Dictionary<int, AxCon>();
+    private Timer outputTimer;
+    private Timer inputTimer;
+    private AutoResetEvent waitOutputHandle = new AutoResetEvent(false);
+    private AutoResetEvent waitInputHandle = new AutoResetEvent(false);
+    private int workerCount = 0;
+    private bool outputPaused = false;
+    private bool inputPaused = true;
+    private string userInput = "";
+    private int updateScreenPeriod = 500;
+    private int inputPollPeriod = 200;
+    private int fatalErrorCount = 0;
     private Dictionary<int,Dictionary<string,int>> stat = new Dictionary<int,Dictionary<string,int>>();
-    private int fatal_err_count;
+    private object lockOn = new object();
+    private StringBuilder output = new StringBuilder();
+    
+    public static readonly string logDir = "log";
     
     public static void Main(string[] args)
     {
+        ChDir();
+        Directory.CreateDirectory(logDir);
+        
         int count;
         AMQPManager am;
         if (args.Length > 0 && Int32.TryParse(args[0], out count))
         {
-            if (count > 0 && count <= worker_max_count)
-            {
-                am = new AMQPManager(count);
-            }
+            am = new AMQPManager(count);
         }
         else
         {
-            am = new AMQPManager(1);
+            am = new AMQPManager(0);
         }
     }
 
     public AMQPManager(int count)
     {
-        is_console_available = IsConsoleAvailable();
-        thrd = new Thread(Work);
+        Configure(ref count);
+        
+        isConsoleAvailable = IsConsoleAvailable();
+        var thrd = new Thread(Work);
         thrd.Start(count);
         
-        do
-        {
-            if (!output_paused) Print();
-            // TODO: add Timer
-            Thread.Sleep(refresh_period);
-        }
-        while (worker_count > 0);
+        outputTimer = new Timer(
+            (obj) => {
+                if (!outputPaused) Print();
+            },
+            null,
+            0,
+            updateScreenPeriod
+        );
+        waitOutputHandle.WaitOne();
+        outputTimer.Dispose();
         Print();
+    }
+    
+    private void Configure(ref int count)
+    {
+        var conf = ConfigLoader.LoadFile("./config/managerConfig.yaml");
+        int parsedValue = 0;
+        
+        if (conf.ContainsKey("maxWorkersCount") && Int32.TryParse(conf["maxWorkersCount"], out parsedValue))
+        {
+            maxWorkersCount = parsedValue;
+        }
+        if (count == 0 &&
+            conf.ContainsKey("startupWorkersCount") && Int32.TryParse(conf["startupWorkersCount"], out parsedValue)
+            )
+        {
+            count = parsedValue;
+        }
+        if (count < 0 || count > maxWorkersCount)
+        {
+            count = 1;
+        }
+        startupWorkersCount = count;
+        if (conf.ContainsKey("amqpInitTimeout") && Int32.TryParse(conf["amqpInitTimeout"], out parsedValue))
+        {
+            amqpInitTimeout = parsedValue;
+        }
+        if (conf.ContainsKey("axconInitTimeout") && Int32.TryParse(conf["axconInitTimeout"], out parsedValue))
+        {
+            axconInitTimeout = parsedValue;
+        }
+        if (conf.ContainsKey("axconRequestTimeout") && Int32.TryParse(conf["axconRequestTimeout"], out parsedValue))
+        {
+            axconRequestTimeout = parsedValue;
+        }
     }
     
     private void Work(object count)
     {
+        inputTimer = new Timer(
+            (obj) => {
+                if (isConsoleAvailable && Console.KeyAvailable) {
+                    ConsoleKeyInfo ki = Console.ReadKey(outputPaused || inputPaused);
+                    if (!inputPaused)
+                        HandleInput(ki);
+                };
+            },
+            null,
+            0,
+            inputPollPeriod
+        );
         AddWorkers((int)count);
-        while (is_receive_commands)
-        {
-            if (is_console_available && Console.KeyAvailable) {
-                ConsoleKeyInfo ki = Console.ReadKey(true);
-                HandleInput(ki);
-            }
-            // TODO: add Timer
-            Thread.Sleep(input_poll_period);
-        }
+        inputPaused = false;
+        waitInputHandle.WaitOne();
+        inputTimer.Dispose();
     }
     
     private void AddWorkers(int count)
@@ -83,80 +142,176 @@ public class AMQPManager
     
     private void AddWorker()
     {
-        if (GetRunningWorkerCount() < worker_max_count)
+        if (GetRunningWorkerCount() >= maxWorkersCount)
+            return;
+        int workerId = GetWorkerId();
+        var amqp = new AMQP(workerId);
+        var axcon = new AxCon(config, workerId);
+        lock (lockOn)
         {
-            var amqp = new AMQP();
-            amqp.OnStop += DeleteWorker;
-            amqp.OnFatalError += FatalErrorHandler;
-            worker_list.Add(amqp);
-            worker_count++;
+            amqpDic.Add(workerId, amqp);
+            axconDic.Add(workerId, axcon);
+            workerCount++;
+        }
+        amqp.OnStop += DeleteWorker;
+        
+        var t1 = DateTime.Now;
+        IAsyncResult amqpAsyncResult = new Action(amqp.Init).BeginInvoke((obj) => {dbg.fa("amqp init time=" + (DateTime.Now-t1).TotalMilliseconds.ToString("0"));}, null);
+        
+        bool amqpWaitRes = amqpAsyncResult.AsyncWaitHandle.WaitOne(amqpInitTimeout, true);
+        if (amqpWaitRes && amqp.GetState() == AMQP.State.Ready)
+        {
+            
+            var t2 = DateTime.Now;
+            IAsyncResult axconAsyncResult = new Action(axcon.Init).BeginInvoke((obj) => {dbg.fa("axcon init time=" + (DateTime.Now-t2).TotalMilliseconds.ToString("0"));}, null);
+            bool axconWaitRes = axconAsyncResult.AsyncWaitHandle.WaitOne(axconInitTimeout, true);
+            if (axconWaitRes && axcon.GetState() == AxCon.State.Ready)
+            {
+                amqp.OnAxRequest += AxRequest;
+                amqp.Start();
+            }
+            else
+            {
+                dbg.fa(string.Format("axcon init failed {0} state={1}", workerId, axcon.GetState()));
+                fatalErrorCount++;
+            }
+        }
+        else
+        {
+            dbg.fa(string.Format("amqp init failed {0} state={1}", workerId, amqp.GetState()));
+            amqp.SetInitError();
+            fatalErrorCount++;
         }
     }
     
     private void DeleteWorker(AMQP a)
     {
-        worker_list.Remove(a);
-        worker_count--;
+        //logoff asynchronously, exceptions is suppressed
+        new Action(axconDic[a.workerId].Logoff).BeginInvoke(null, null);
+        lock (lockOn)
+        {
+            amqpDic.Remove(a.workerId);
+            axconDic.Remove(a.workerId);
+            workerCount--;
+        }
+    }
+    
+    private int GetWorkerId()
+    {
+        return Interlocked.Increment(ref _workerId);
+    }
+    
+    private Dictionary<string,object> AxRequest(AMQP amqp, string method, Dictionary<string,dynamic> prms, string id)
+    {
+        var result = new Dictionary<string,object>();
+        result = axconDic[amqp.workerId].request(method, prms, id);
+        return result;
     }
     
     private void FatalErrorHandler(AMQP a)
     {
-        fatal_err_count++;
-        if (fatal_err_count < fatal_err_threshold)
+        fatalErrorCount++;
+        if (fatalErrorCount < fatalErrorThreshold)
         {
             AddWorker();
         }
         else
         {
-            is_receive_commands = false;
+            waitInputHandle.Set();
         }
     }
     
     private void StopWorker()
     {
-        foreach (var w in worker_list)
+        lock (lockOn)
         {
-            if (!w.is_stop_pend)
+            var list = amqpDic.Keys.ToList();
+            list.Sort();
+            foreach (var workerId in list)
             {
-                w.is_stop_pend = true;
-                break;
+                var amqp = amqpDic[workerId];
+                var state = amqp.GetState();
+                if (state == AMQP.State.Init
+                    || state == AMQP.State.Ready
+                    || state == AMQP.State.Running
+                    || state == AMQP.State.Paused
+                    || state == AMQP.State.InitError)
+                {
+                    amqp.StopPend();
+                    break;
+                }
             }
         }
     }
     
     private void StopAllWorkers()
     {
-        foreach (var w in worker_list)
+        lock (lockOn)
         {
-            w.is_stop_pend = true;
-        }
-    }
-    
-    private void StopWorkerByNo(int no)
-    {
-        foreach (var w in worker_list)
-        {
-            if (w.AMQP_no == no)
+            foreach (var amqp in amqpDic.Values)
             {
-                w.is_stop_pend = true;
-                break;
+                amqp.StopPend();
             }
         }
     }
     
-    private void RestartWorkers()
+    private void StopWorkerById(int workerId)
+    {
+        lock (lockOn)
+        {
+            if (amqpDic.ContainsKey(workerId))
+            {                
+                amqpDic[workerId].StopPend();
+            }
+        }
+    }
+    
+    private void RestartAllWorkers()
     {
         int cur_worker_count = GetRunningWorkerCount();
         StopAllWorkers();
         AddWorkers(cur_worker_count);
     }
+
+    private void TogglePausedForAllWorkers()
+    {
+        lock (lockOn)
+        {
+            foreach (var amqp in amqpDic.Values)
+            {
+                amqp.TogglePaused();
+            }
+        }
+    }
     
+    private void TogglePausedForWorkerById(int workerId)
+    {
+        lock(lockOn)
+        {
+            if (amqpDic.ContainsKey(workerId))
+            {                
+                amqpDic[workerId].TogglePaused();
+            }
+        }
+    }
+        
     private int GetRunningWorkerCount()
     {
         int result = 0;
-        foreach (var w in worker_list)
+        lock(lockOn)
         {
-            if (!w.is_stop_pend) result++;
+            foreach (var amqp in amqpDic.Values)
+            {
+                var state = amqp.GetState();
+                if (state == AMQP.State.Init
+                    || state == AMQP.State.Ready
+                    || state == AMQP.State.Running
+                    || state == AMQP.State.Paused
+                    || state == AMQP.State.InitError)
+                {
+                    result++;
+                }
+            }
         }
         return result;
     }
@@ -165,11 +320,11 @@ public class AMQPManager
     {
         string keyChar = ki.KeyChar.ToString();
         string keyStr = ki.Key.ToString();
-        if (output_paused && keyStr != "Spacebar")
+        if (outputPaused && keyStr != "Spacebar")
         {
             return;
         }
-        if (user_input == "")
+        if (userInput == "")
         {
             switch (keyStr)
             {
@@ -179,6 +334,7 @@ public class AMQPManager
                     break;
                 case "R":
                 case "Q":
+                case "P":
                     if ((ki.Modifiers & ConsoleModifiers.Control) != 0)
                     {
                         ExecuteCommand(keyStr);
@@ -190,33 +346,33 @@ public class AMQPManager
                 default:
                     if (Regex.IsMatch(keyChar, "[0-9a-zA-Z]"))
                     {
-                        user_input += keyChar;
+                        userInput += keyChar;
                     }
                     break;
             }
         }
         else
         {
-            switch (keyStr)
+            switch (ki.Key)
             {
-                case "Enter":
-                    ExecuteCommand(user_input);
-                    user_input = "";
+                case ConsoleKey.Backspace:
+                    userInput = userInput.Remove(userInput.Length-1);
                     break;
-                case "Backspace":
-                    user_input = user_input.Remove(user_input.Length-1);
-                    break;
-                case "Spacebar":
+                case ConsoleKey.Spacebar:
                     ToggleOutputPaused();
+                    userInput = "";
+                    break;
+                case ConsoleKey.Escape:
+                    userInput = "";
                     break;
                 default:
-                    if (ki.Key == ConsoleKey.Escape){
-                        user_input = "";
-                    } else
+                    if (Regex.IsMatch(keyChar, "[0-9a-zA-Z]"))
                     {
-                        if (Regex.IsMatch(keyChar, "[0-9a-zA-Z]"))
+                        userInput += keyChar;
+                        if (Regex.IsMatch(userInput.ToUpper(), @"\d*D|\d*P"))
                         {
-                            user_input += keyChar;
+                            ExecuteCommand(userInput);
+                            userInput = "";
                         }
                     }
                     break;
@@ -227,38 +383,44 @@ public class AMQPManager
     private void ExecuteCommand(string cmd)
     {
         cmd = cmd.ToUpper();
-        if (Regex.IsMatch(cmd, @"A|\d*D|R|Q"))
+        if (Regex.IsMatch(cmd, @"A|\d*D|\d*P|R|Q"))
         {
+            inputPaused = true;
             switch (cmd)
             {
                 case "A":
-                    AddWorker();
+                    AddWorkers(1);
                     break;
                 case "D":
                     StopWorker();
-                    if (GetRunningWorkerCount() == 0)
-                    {
-                        is_receive_commands = false;
-                    }
                     break;
                 case "R":
-                    RestartWorkers();
+                    RestartAllWorkers();
+                    break;
+                case "P":
+                    TogglePausedForAllWorkers();
                     break;
                 case "Q":
                     StopAllWorkers();
-                    is_receive_commands = false;
+                    waitInputHandle.Set();
+                    waitOutputHandle.Set();
                     break;
                 default:
                     if (Regex.IsMatch(cmd, @"\d+D"))
                     {
-                        int no = Convert.ToInt32(cmd.Replace("D", ""));
-                        StopWorkerByNo(no);
-                        if (GetRunningWorkerCount() == 0)
-                        {
-                            is_receive_commands = false;
-                        }
+                        int workerId = Convert.ToInt32(cmd.Replace("D", ""));
+                        StopWorkerById(workerId);
+                    }
+                    if (Regex.IsMatch(cmd, @"\d+P"))
+                    {
+                        int workerId = Convert.ToInt32(cmd.Replace("P", ""));
+                        TogglePausedForWorkerById(workerId);
                     }
                     break;
+            }
+            if (cmd != "Q")
+            {
+                inputPaused = false;
             }
         }
     }
@@ -266,8 +428,8 @@ public class AMQPManager
     private void ToggleOutputPaused()
     {
         string cap = "(paused) ";
-        output_paused = !output_paused;
-        if (output_paused)
+        outputPaused = !outputPaused;
+        if (outputPaused)
             Console.Title = cap + Console.Title;
         else
             Console.Title = Console.Title.Replace(cap, "");
@@ -275,104 +437,148 @@ public class AMQPManager
     
     private void Print()
     {
-        if (!is_console_available)
+        if (!isConsoleAvailable)
         {
             return;
         }
-        var heap_mem = GC.GetTotalMemory(false);
-        output.Clear();
-        string tmpl = "{0,3} {1,-19} {13,-9} {6,-6} {2,5} {4,5} {3,6} {5,6} {7,-5} {8,-6} {9,9} {10,7} {11,-20} {12,-20} {0,3}";
+        if (!Monitor.TryEnter(lockOn))
+        {
+            dbg.fa("Print() TryEnter failed");
+            return;
+        }
         
+        output.Clear();
+        string tmpl = "{0,4} {1,-14} {2,4} {3,5} {4,4} {5,5} {6,-10} {7,4} {8,-9} {9,5} {10,-9} {11,6} {12,-20} {13,-20} {0,4}";
         string head = string.Format(
             tmpl,
             "no",
-            "start_time",
-            "a_msg",
-            "ax_msg",
-            "a_err",
-            "ax_err",
-            "a_proc",
-            "ax_lo",
-            "ax_req",
-            "req_start",
-            "req_dur",
-            "req_class",
-            "longest",
-            "state"
+            "startTime",
+            "aMsg",
+            "axMsg",
+            "aErr",
+            "axErr",
+            "state",
+            "proc",
+            "axState",
+            "axReq",
+            "lastReqSt",
+            "reqDur",
+            "reqClass",
+            "longest"
         );
         output.AppendLine(head);
         output.AppendLine(string.Format("{0}", "".PadLeft(head.Length, '=')));
-        for (int i = 0; i < worker_list.Count; i++)
+        
+        Dictionary<string,int> total;
+        int count = 0;
+        List<int> list;
+        string objCount;
+        try
         {
-            var amqp = worker_list[i];
-            var ax_info = amqp.GetAxInfo();
-            double current_req_duration = System.Math.Round((DateTime.Now - ax_info["last_request_starttime"]).TotalMilliseconds/1000, 1);
-            output.AppendLine(string.Format(
-                tmpl,
-                amqp.AMQP_no,
-                amqp.start_time,
-                amqp.msg_count,
-                ax_info["msg_count"],
-                amqp.err_count,
-                ax_info["err_count"],
-                amqp.IsProcessing() ? "yes" : "",
-                ax_info["is_logged_on"] ? "yes" : "",
-                ax_info["is_requesting"] ? "yes" : "",
-                ax_info["last_request_starttime"] != default(DateTime) ? ax_info["last_request_starttime"].ToString("HH:mm:ss") : "",
-                ax_info["is_requesting"] && current_req_duration > 0 ? current_req_duration.ToString("0.0") : "",
-                ax_info["is_requesting"] ? ax_info["last_method"].Replace("cmpECommerce", "").Trim('_') : "",
-                ax_info["longest_method"].Replace("cmpECommerce", "").Trim('_'),
-                amqp.is_stop_pend ? "stop_pend" : "running"
-            ));
+            list = amqpDic.Keys.ToList();
+            list.Sort();
+            foreach (var workerId in list)
+            {
+                AMQP amqp = null;
+                AxCon axcon = null;
+                if (amqpDic.ContainsKey(workerId))
+                {
+                    amqp = amqpDic[workerId];
+                    axcon = axconDic[workerId];
+                }
+                if (amqp == null) continue;
+                var axInfo = axcon.GetInfo();
+                double current_req_duration = axInfo["lastRequestStarttime"] != default(DateTime)
+                    ? System.Math.Round((DateTime.Now - axInfo["lastRequestStarttime"]).TotalMilliseconds/1000, 1)
+                    : 0;
+                output.AppendLine(string.Format(
+                    tmpl,
+                    amqp.workerId,
+                    amqp.startTime.ToString("MM-dd HH:mm:ss"),
+                    amqp.msgCount,
+                    axInfo["msgCount"],
+                    amqp.errorCount,
+                    axInfo["errorCount"],
+                    amqp.GetState(),
+                    amqp.IsProcessing() ? "yes" : "",
+                    axcon.GetState(),
+                    axInfo["isRequesting"] ? "yes" : "",
+                    axInfo["lastRequestStarttime"] != default(DateTime) ? axInfo["lastRequestStarttime"].ToString("HH:mm:ss") : "",
+                    axInfo["isRequesting"] && current_req_duration > 0 ? current_req_duration.ToString("0.0") : "",
+                    axInfo["isRequesting"] ? axInfo["lastMethod"].Replace("cmpECommerce", "").Trim('_') : "",
+                    axInfo["longestMethod"].Replace("cmpECommerce", "").Trim('_')
+                ));
+                count++;
+            }
+            objCount = string.Format("a={0} ax={1} w={2}", amqpDic.Count, axconDic.Count, workerCount);
+            SaveStat();
+            total = CalcTotalStat();
         }
-        SaveStat();
-        var total = CalcTotalStat();
+        finally
+        {
+            Monitor.Exit(lockOn);
+        }
         output.AppendLine(string.Format(
-            "\nSummary: amqp_msg={0} ax_msg={1} amqp_err={2} ax_err={3} workers={4} heap={5:0.0}MB private={6:0.0}MB msgInQueue={7} fatal_err={8}",
-            total["amqp_msg_count"],
-            total["ax_msg_count"],
-            total["amqp_err_count"],
-            total["ax_err_count"],
-            worker_count,
-            System.Math.Round(Convert.ToSingle(heap_mem) / 1024 / 1024, 1),
+            "\nRefresh period: {0}s, running: {1:d\\.hh\\:mm\\:ss}",
+            System.Math.Round(updateScreenPeriod / 1000.0, 1),
+            (DateTime.Now - startTime))
+        );
+        output.AppendLine(string.Format(
+            "Summary: amqpMsg={0} axMsg={1} amqpErr={2} axErr={3} workers={4} {9} heap={5:0.0}MB private={6:0.0}MB msgInQueue={7} fatal_err={8}",
+            total["amqpMsgCount"],
+            total["axMsgCount"],
+            total["amqpErrorCount"],
+            total["axErrorCount"],
+            count,
+            System.Math.Round(Convert.ToSingle(GC.GetTotalMemory(false)) / 1024 / 1024, 1),
             System.Math.Round(Convert.ToSingle(cur_proc.PrivateMemorySize64) / 1024 / 1024, 1),
             AMQP.msgInQueue.ToString(),
-            fatal_err_count
+            fatalErrorCount,
+            objCount
         ));
         output.AppendLine(string.Format(
-            @"Refresh period: {0}s, running: {1:d\.hh\:mm\:ss}",
-            System.Math.Round(refresh_period / 1000.0, 1),
-            (DateTime.Now - start_time))
-        );
-        output.AppendLine("\n?: a: start new worker, [No]d: stop worker [by No], Ctrl-r: restart all workers, Ctrl-q: stop all workers and exit");
-        output.AppendLine("Space: pause, Ctrl-C: force exit");
+            "Config: amqpInitTimeout={0}s axconInitTimeout={1}s axconRequestTimeout={2}s startupWorkersCount={3}",
+            amqpInitTimeout / 1000.0,
+            axconInitTimeout / 1000.0,
+            axconRequestTimeout / 1000.0,
+            startupWorkersCount
+        ));
+        output.AppendLine("\n?: a: start new worker, [id]d: stop worker [by id], Ctrl-r: restart all workers, Ctrl-q: stop all workers and exit");
+        output.AppendLine("?: <id>p: pause/resume worker by <id>, Ctrl-p: pause/resume all workers, k: kill worker by id (not yet implemented)");
+        output.AppendLine("Space: pause screen update, Ctrl-C: force exit");
         Console.Clear();
         Console.Write(output.ToString());
-        Console.Write(user_input);
+        Console.Write("{0}", userInput);
     }
     
     private void SaveStat()
     {
-        for (int i = 0; i < worker_list.Count; i++)
+        foreach (var workerId in amqpDic.Keys)
         {
-            var amqp = worker_list[i];
-            if (!stat.ContainsKey(amqp.AMQP_no))
+            AMQP amqp = null;
+            AxCon axcon = null;
+            if (amqpDic.ContainsKey(workerId))
+            {
+                amqp = amqpDic[workerId];
+                axcon = axconDic[workerId];
+            }
+            if (amqp == null) continue;
+            if (!stat.ContainsKey(workerId))
             {
                 stat.Add(
-                    amqp.AMQP_no,
+                    workerId,
                     new Dictionary<string,int>(){
-                        {"amqp_msg_count", 0},
-                        {"ax_msg_count", 0},
-                        {"amqp_err_count", 0},
-                        {"ax_err_count", 0}
+                        {"amqpMsgCount", 0},
+                        {"axMsgCount", 0},
+                        {"amqpErrorCount", 0},
+                        {"axErrorCount", 0}
                     }
                  );
             }
-            var ax_info = amqp.GetAxInfo();
-            stat[amqp.AMQP_no]["amqp_msg_count"] = amqp.msg_count;
-            stat[amqp.AMQP_no]["ax_msg_count"] = ax_info["msg_count"];
-            stat[amqp.AMQP_no]["amqp_err_count"] = amqp.err_count;
-            stat[amqp.AMQP_no]["ax_err_count"] = ax_info["err_count"];
+            stat[workerId]["amqpMsgCount"] = amqp.msgCount;
+            stat[workerId]["axMsgCount"] = axcon.msgCount;
+            stat[workerId]["amqpErrorCount"] = amqp.errorCount;
+            stat[workerId]["axErrorCount"] = axcon.errorCount;
         }
     }
     
@@ -380,17 +586,17 @@ public class AMQPManager
     {
         Dictionary<string,int> result = 
             new Dictionary<string,int>(){
-                {"amqp_msg_count", 0},
-                {"ax_msg_count", 0},
-                {"amqp_err_count", 0},
-                {"ax_err_count", 0}
+                {"amqpMsgCount", 0},
+                {"axMsgCount", 0},
+                {"amqpErrorCount", 0},
+                {"axErrorCount", 0}
             };
         foreach (var i in stat)
         {
-            result["amqp_msg_count"] += i.Value["amqp_msg_count"];
-            result["ax_msg_count"] += i.Value["ax_msg_count"];
-            result["amqp_err_count"] += i.Value["amqp_err_count"];
-            result["ax_err_count"] += i.Value["ax_err_count"];
+            result["amqpMsgCount"] += i.Value["amqpMsgCount"];
+            result["axMsgCount"] += i.Value["axMsgCount"];
+            result["amqpErrorCount"] += i.Value["amqpErrorCount"];
+            result["axErrorCount"] += i.Value["axErrorCount"];
         }
         return result;
     }
@@ -399,11 +605,19 @@ public class AMQPManager
     {
         try
         {
-            return Console.LargestWindowWidth > 0;
+            var a = Console.KeyAvailable;
+            return true;
         }
         catch
         {
             return false;
         }
+    }
+    
+    private static void ChDir()
+    {
+        String path = System.Reflection.Assembly.GetExecutingAssembly().CodeBase;
+        String directory = System.IO.Path.GetDirectoryName(path).Replace("file:\\", "");
+        Environment.CurrentDirectory = directory;        
     }
 }

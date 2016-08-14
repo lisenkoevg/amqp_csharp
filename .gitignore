@@ -1,5 +1,6 @@
 log/
 dll/
 config/
+!config/managerConfig.yaml
 *.exe
 user_hash.txt
