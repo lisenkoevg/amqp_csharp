@@ -12,17 +12,17 @@ using System.Threading;
 
 public class AMQP
 {
-    public enum State {Init, Ready, Running, Paused, StopPend, Stopped, InitError};
+    public enum State {Init, Connect, Ready, Running, Paused, StopPend, InitError, Stopped};
     public readonly int workerId;
     public DateTime startTime = DateTime.Now;
     public int errorCount = 0;
     public int msgCount = 0;
-    public delegate void AMQPEventHandler(AMQP a);
+    // public delegate void AMQPEventHandler(AMQP a);
+    // public event AMQPEventHandler OnStop;
     public delegate Dictionary<string,object> AxRequestHandler(AMQP amqp, string method, Dictionary<string,dynamic> prms, string id);
-    public event AMQPEventHandler OnStop;
-    public event AMQPEventHandler OnFatalError;
     public event AxRequestHandler OnAxRequest;
     public static uint msgInQueue;
+    private bool asyncInitTimedOut = false;
     private static readonly String queue = "ax.test";
     private static readonly Dictionary<string,dynamic> settings = ConfigLoader.LoadFile("./config/settings.yaml");
     private State state = State.Init;
@@ -39,6 +39,7 @@ public class AMQP
     
     public void Init()
     {
+        var t1 = DateTime.Now;
         ConnectionFactory factory = new ConnectionFactory() {
             HostName = settings["amqp"]["host"],
             Port = Convert.ToInt32(settings["amqp"]["port"]),
@@ -48,36 +49,49 @@ public class AMQP
         };
         try 
         {
+            SetState(State.Connect);
             connection = factory.CreateConnection();
             channel = connection.CreateModel();
             // channel.QueueDeclare(queue: queue, durable: true, exclusive: false, autoDelete: false, arguments: null);
             consumer = new EventingBasicConsumer(channel);
             consumer.Received += ReceivedHandler;
             channel.BasicQos(prefetchSize: 0, prefetchCount: 1, global: false);
-            SetState(State.Ready);
+            lock (lockOn)
+            {
+                if (!GetAsyncInitTimedOut())
+                {
+                    SetState(State.Ready);
+                }
+                else
+                {
+                    errorCount++;
+                }
+            }
         }
         catch (Exception e)
         // catch (BrokerUnreachableException e)
         {
-            log(e, "err");
             SetState(State.InitError);
+            log(e, "err");
+            errorCount++;
         }
+        dbg.fa("amqp.Init() " + workerId + " time=" + (DateTime.Now-t1).TotalMilliseconds.ToString("0") + " " + GetState() + " asyncRes=" + GetAsyncInitTimedOut());
     }
     
     private void ReceivedHandler(object model, BasicDeliverEventArgs ea)
     {
+        State state = GetState();
         try
         {
-            if (GetState() == State.Paused)
+            if (state == State.Paused || state == State.StopPend || state == State.Stopped)
             {
                 Thread.Sleep(100);
                 channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
                 return;
             }
             msgInQueue = channel.MessageCount(queue);
-            isProcessing = true;
+            SetIsProcessing(true);
             string message = Encoding.UTF8.GetString(ea.Body);
-            
             IBasicProperties props = ea.BasicProperties;
             string ReplyTo = props.IsReplyToPresent() ? props.ReplyTo : "";
             string CorrelationId = props.IsCorrelationIdPresent() ? props.CorrelationId : "";
@@ -106,21 +120,15 @@ public class AMQP
                 );
             }
         }
-        catch (AlreadyClosedException e)
-        {
-            log(e, "err");
-            errorCount++;
-            OnFatalError(this);
-        }
+        // catch (AlreadyClosedException e)
         catch (Exception e)
         {
             log(e, "err");
             errorCount++;
-            OnFatalError(this);
         }
         finally
         {
-            isProcessing = false;
+            SetIsProcessing(false);
         }
     }
 
@@ -130,7 +138,7 @@ public class AMQP
         thrd.Start();
     }
     
-    public void Work()
+    private void Work()
     {
         try 
         {
@@ -140,57 +148,77 @@ public class AMQP
                 consumer: consumer
             );
             SetState(State.Running);
-            
-            // TODO Timer
-            while (GetState() == State.Running || GetState() == State.Paused || isProcessing)
-            {
-                if (!connection.IsOpen)
-                {
-                    lock(lockOn) state = State.StopPend;
-                    OnFatalError(this);
-                }
-                Thread.Sleep(1000);
-            }
-            channel.Dispose();
-            connection.Dispose();
         }
         // catch (BrokerUnreachableException e)
         catch (Exception e)
         {
             log(e, "err");
             errorCount++;
-            OnFatalError(this);
         }
-        OnStop.BeginInvoke(this, null, null);
+            
+        while (GetState() == State.Running || GetState() == State.Paused || IsProcessing())
+        {
+            if (!connection.IsOpen)
+            {
+                SetState(State.StopPend);
+                errorCount++;
+            }
+            Thread.Sleep(1000);
+        }
+        channel.Dispose();
+        connection.Dispose();
+        SetState(State.Stopped);
+    }
+    
+    public bool GetAsyncInitTimedOut()
+    {
+        lock (lockOn) return asyncInitTimedOut;
+    }
+    
+    public void SetAsyncInitTimedOut(bool val)
+    {
+        lock (lockOn) asyncInitTimedOut = val;
     }
     
     public State GetState()
     {
-        lock (lockOn)
-            return state;
+        lock (lockOn) return state;
     }
     
     private void SetState(State state)
     {
         lock (lockOn)
         {
-            if (state == State.Ready && this.state != State.Init) return;
             this.state = state;
         }
     }
-    
-    public void SetInitError()
+        
+    public void SetInitState()
     {
-        SetState(State.InitError);
+        SetState(State.Init);
+        try { channel.Dispose(); } catch {}
+        try { connection.Dispose(); } catch {}
     }
     
     public void StopPend()
     {
+        if (consumer != null)
+        {
+            consumer.Received -= ReceivedHandler;
+        }
         lock (lockOn)
         {
-            state = State.StopPend;
-            if (consumer != null)
-                consumer.Received -= ReceivedHandler;
+            State state = GetState();
+            if (state != State.Running && state != State.Paused)
+            {
+                // Needed because in Init() factory.CreateConnection() called without using(var connection = factory.CreateConnection())
+                // and prevent Thread to release Console when exiting application
+                // Thread.CurrentThread.IsBackground = true - doesn't help when Init() called via object Task.
+                try { channel.Dispose(); } catch {}
+                try { connection.Dispose(); } catch {}
+                SetState(State.Stopped);
+            }
+            SetState(State.StopPend);
         }
     }
     
@@ -211,7 +239,14 @@ public class AMQP
 
     public bool IsProcessing()
     {
-        return isProcessing;
+        lock (lockOn)
+            return isProcessing;
+    }
+    
+    private void SetIsProcessing(bool val)
+    {
+        lock (lockOn)
+            isProcessing = val;
     }
     
     private static object lockOnSt = new Object();    

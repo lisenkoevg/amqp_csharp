@@ -5,16 +5,20 @@ set sales_id=100
 set item_id=203866
 set query_string=ATMEGA16-16AU
 
-for /l %%a in (1,1,1000) do (
-    echo call :tests
-    testSend search_item_name_dms_h "{'user_hash': '%user_hash%', 'query_string': 'abc!random!'}"
+if "%1" == "" (
+    set n=1
+) else (
+    set n=%1
+)
+
+for /l %%a in (1,1,%n%) do (
+    call :tests
     ping -n 10 127.0.0.1 > nul
 )
 goto :eof
 
 :tests
 REM testSend purgeQueue timestamp "{'user_hash': '%user_hash%'}"
-REM testSend timestamp "{'user_hash': '%user_hash%'}"
 
 testSend add_dlv_mode "{'user_hash': '%user_hash%'}"
 testSend address_add "{'user_hash': '%user_hash%'}"

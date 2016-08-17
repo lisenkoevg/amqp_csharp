@@ -8,22 +8,33 @@ using Microsoft.Dynamics.BusinessConnectorNet;
 using fastJSON;
 using System.Diagnostics;
 
+class AxWarning : Exception
+{
+    public AxWarning(string msg) : base(msg)
+    {}
+}
+
+class AxException : Exception
+{
+    public AxException(string msg) : base(msg)
+    {}
+}
+
 public class AxCon
 {
-    public enum State {Init, LoggingIn, Ready, InitError, Reload};
+    public enum State {Init, Login, Ready, Logoff, InitError, FinError};
+    public enum RequestState {NotApplicable, WaitReq, Request, ReqErr};
     public int msgCount = 0;
     public int errorCount = 0;
     private State state = State.Init;
+    private RequestState requestState = RequestState.NotApplicable;
     private Axapta ax;
     private Dictionary<string,dynamic> config;
     private Dictionary<string,AxaptaObject> axClassPool;
     private string clientId;
-    private readonly int workerId;
-
-    public delegate void AxConEventHandler();
-    // public event AxConEventHandler OnFatalError;
-
-    private bool isRequesting = false;
+    public readonly int workerId;
+    private bool asyncInitTimedOut = false;
+    private bool asyncRequestTimedOut = false;
     private DateTime lastRequestStarttime;
     private TimeSpan longestMethodDuration = new TimeSpan();
     private string lastMethod = "";
@@ -35,28 +46,72 @@ public class AxCon
     {
         this.config = config;
         this.workerId = workerId;
+        ax = new Axapta();
+        axClassPool = new Dictionary<string,AxaptaObject>();
+        #if AxMock
+        ax = new Axapta(config["methods"]);
+        #endif
     }
 
     public void Init()
     {
-        ax = new Axapta();
-        axClassPool = new Dictionary<string,AxaptaObject>();
-#if AxMock
-ax = new Axapta(config["methods"]);
-#endif
+        InitOrFinAction(Logon, State.Login, State.Ready, State.InitError);
+    }
+
+    public void Fin()
+    {
+        InitOrFinAction(Logoff, State.Logoff, State.Init, State.FinError);
+    }
+
+    private void InitOrFinAction(Action act, State beforeState, State afterState, State errorState)
+    {
+        string msg = "";
+        var t1 = DateTime.Now;
         try
         {
-            SetState(State.LoggingIn);
-            Logon();
-            SetState(State.Ready);
+            SetState(beforeState);
+            act.Invoke();
+            lock (lockOn)
+            {
+                if (!GetAsyncInitTimedOut())
+                {
+                    SetState(afterState);
+                }
+                else
+                {
+                    errorCount++;
+                }
+            }
         }
         // catch (ServerUnavailableException e)
         // catch (SessionTerminatedException e)
         catch (Exception e)
         {
             log(e, "err");
-            SetState(State.InitError);
+            msg = e.GetType().Name + " " + e.Message;
+            SetState(errorState);
+            errorCount++;
         }
+        dbg.fa(string.Format(
+            "{0}.{1} {2} time={3}ms {4} asyncTimedOut={5} {6}",
+            act.Target,
+            act.Method,
+            workerId,
+            (DateTime.Now-t1).TotalMilliseconds.ToString("0"),
+            GetState(),
+            GetAsyncInitTimedOut(),
+            msg
+        ));
+    }
+
+    public bool GetAsyncInitTimedOut()
+    {
+        lock (lockOn) return asyncInitTimedOut;
+    }
+
+    public void SetAsyncInitTimedOut(bool result)
+    {
+        lock (lockOn) asyncInitTimedOut = result;
     }
 
     public State GetState()
@@ -72,6 +127,33 @@ ax = new Axapta(config["methods"]);
         }
     }
 
+    public void SetInitState()
+    {
+        SetState(State.Init);
+    }
+
+    public RequestState GetRequestState()
+    {
+        lock(lockOn)
+            return requestState;
+    }
+
+    private void SetRequestState(RequestState val)
+    {
+        lock(lockOn)
+            requestState = val;
+    }
+
+    public bool GetAsyncRequestTimedOut()
+    {
+        lock (lockOn) return asyncRequestTimedOut;
+    }
+
+    public void SetAsyncRequestTimedOut(bool result)
+    {
+        lock (lockOn) asyncRequestTimedOut = result;
+    }
+    
     private void Logon()
     {
         ax.Logon("rba", "ru", "192.168.3.120:2714", "");
@@ -98,10 +180,12 @@ ax = new Axapta(config["methods"]);
         Logon();
     }
 
-    public Dictionary<string,object> request(string method, Dictionary<string,dynamic> prms, string id = "")
+    public Dictionary<string,object> request(string method, Dictionary<string,dynamic> prms, string id)
     {
         Stopwatch stopWatch = new Stopwatch();
         stopWatch.Start();
+        lastRequestStarttime = DateTime.Now;
+        lastMethod = method;
 
         clientId = null;
 
@@ -132,7 +216,7 @@ ax = new Axapta(config["methods"]);
                 }
                 break;
             default:
-                isRequesting = true;
+                SetRequestState(RequestState.Request);
                 try
                 {
                     if (!config["methods"].ContainsKey(method))
@@ -217,21 +301,29 @@ ax = new Axapta(config["methods"]);
                     errorCount++;
                     Reload();
                 }
-                isRequesting = false;
+                
+                SetRequestState(RequestState.WaitReq);
                 msgCount++;
                 break;
         }
         stopWatch.Stop();
+        
         log(
             new Dictionary<string,dynamic>(){
                 {"response", response},
-                {"elapsed", System.Math.Round(stopWatch.Elapsed.TotalMilliseconds, 0)}
+                {"elapsed", stopWatch.ElapsedMilliseconds}
             },
             "response",
             true
         );
-        response["elapsed"] = System.Math.Round(stopWatch.Elapsed.TotalMilliseconds, 0);
-
+        response["elapsed"] = stopWatch.ElapsedMilliseconds;
+        
+        TimeSpan last_method_duration = stopWatch.Elapsed;
+        if (longestMethod == "" || last_method_duration > longestMethodDuration)
+        {
+            longestMethod = lastMethod;
+            longestMethodDuration = last_method_duration;
+        }
         return response;
     }
 
@@ -240,13 +332,13 @@ ax = new Axapta(config["methods"]);
         return new Dictionary<string,object>() {
             {"errorCount", errorCount},
             {"msgCount", msgCount},
-            {"isRequesting", isRequesting},
             {"lastRequestStarttime", lastRequestStarttime},
             {"lastMethod", lastMethod},
             {"longestMethod", longestMethod},
             {"longestMethodDuration", longestMethodDuration}
         };
     }
+
     private object ax_class(string ax_class_name)
     {
         if (!axClassPool.ContainsKey(ax_class_name))
@@ -258,8 +350,6 @@ ax = new Axapta(config["methods"]);
 
     private object ax_class_call(AxaptaObject ax_class, string method, params dynamic[] prms)
     {
-        lastRequestStarttime = DateTime.Now;
-        lastMethod = GetKeyByValue(ax_class, axClassPool);
         object result;
         switch (prms.Length)
         {
@@ -276,12 +366,6 @@ ax = new Axapta(config["methods"]);
                 throw new AxException("invalid axapta method call");
         }
 
-        TimeSpan last_method_duration = DateTime.Now - lastRequestStarttime;
-        if (longestMethod == "" || last_method_duration > longestMethodDuration)
-        {
-            longestMethod = lastMethod;
-            longestMethodDuration = last_method_duration;
-        }
         return result;
     }
 
@@ -602,20 +686,6 @@ ax = new Axapta(config["methods"]);
         return result;
     }
 
-    private string GetKeyByValue(AxaptaObject val, Dictionary<string,AxaptaObject> dict)
-    {
-        string result = "";
-        foreach (var i in dict)
-        {
-            if (i.Value == val)
-            {
-                result = i.Key;
-                break;
-            }
-        }
-        return result;
-    }
-    
     private static object lockOnSt = new object();
     private void log(object obj, string suf = "", bool toJSON = false)
     {
@@ -656,16 +726,4 @@ ax = new Axapta(config["methods"]);
         }
         */
     }
-}
-
-class AxWarning : Exception
-{
-    public AxWarning(string msg) : base(msg)
-    {}
-}
-
-class AxException : Exception
-{
-    public AxException(string msg) : base(msg)
-    {}
 }

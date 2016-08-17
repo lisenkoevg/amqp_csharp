@@ -15,12 +15,14 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
        
         public bool Logon(string str1, string str2, string str3, string str4)
         {
-            var rand = new Random();
-            Thread.Sleep(1000 * rand.Next(0,2));
+            Thread.Sleep(100 * new Random().Next(1,10));
+            // throw new Exception("Logon exception");
             return true;
         }
         public bool Logoff()
         {
+            Thread.Sleep(100 * new Random().Next(1,10));
+            // throw new Exception("Logoff exception");
             return true;
         }
         public AxaptaObject CreateAxaptaObject(string objName)

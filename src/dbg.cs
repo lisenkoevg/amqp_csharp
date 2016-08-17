@@ -54,7 +54,7 @@ public class dbg
         {
             using (StreamWriter writer = new StreamWriter(dir+"/debug.log", true))
             {
-                writer.WriteLine("{0};{1};{2}", ts, Thread.CurrentThread.ManagedThreadId, obj.ToString());
+                writer.WriteLine("{0};{1,2};{2}", ts, Thread.CurrentThread.ManagedThreadId, obj.ToString());
             }
         }
     }
