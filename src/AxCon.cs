@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Dynamics.BusinessConnectorNet;
 using fastJSON;
 using System.Diagnostics;
+using System.Threading;
 
 class AxWarning : Exception
 {
@@ -24,8 +25,10 @@ public class AxCon
 {
     public enum State {Init, Login, Ready, Logoff, InitError, FinError};
     public enum RequestState {NotApplicable, WaitReq, Request, ReqErr};
-    public int msgCount = 0;
-    public int errorCount = 0;
+    private int msgCount = 0;
+    private int errorCount = 0;
+    private int requestErrorCount = 0;
+    public int requestTimedOutCount = 0;
     private State state = State.Init;
     private RequestState requestState = RequestState.NotApplicable;
     private Axapta ax;
@@ -35,10 +38,10 @@ public class AxCon
     public readonly int workerId;
     private bool asyncInitTimedOut = false;
     private bool asyncRequestTimedOut = false;
-    private DateTime lastRequestStarttime;
-    private TimeSpan longestMethodDuration = new TimeSpan();
-    private string lastMethod = "";
-    private string longestMethod = "";
+    public DateTime lastRequestStarttime;
+    public TimeSpan longestMethodDuration = new TimeSpan();
+    public string lastMethod = "";
+    public string longestMethod = "";
 
     private object lockOn = new object();
 
@@ -55,27 +58,28 @@ public class AxCon
 
     public void Init()
     {
-        InitOrFinAction(Logon, State.Login, State.Ready, State.InitError);
+        InitOrFinAction(Logon, State.Login, State.Ready, RequestState.WaitReq, State.InitError);
     }
 
     public void Fin()
     {
-        InitOrFinAction(Logoff, State.Logoff, State.Init, State.FinError);
+        InitOrFinAction(Logoff, State.Logoff, State.Init, RequestState.NotApplicable, State.FinError);
     }
 
-    private void InitOrFinAction(Action act, State beforeState, State afterState, State errorState)
+    private void InitOrFinAction(Action act, State stateBefore, State stateAfter, RequestState requestStateAfter, State stateIfError)
     {
         string msg = "";
         var t1 = DateTime.Now;
         try
         {
-            SetState(beforeState);
+            SetState(stateBefore);
             act.Invoke();
             lock (lockOn)
             {
                 if (!GetAsyncInitTimedOut())
                 {
-                    SetState(afterState);
+                    SetState(stateAfter);
+                    SetRequestState(requestStateAfter);
                 }
                 else
                 {
@@ -89,19 +93,22 @@ public class AxCon
         {
             log(e, "err");
             msg = e.GetType().Name + " " + e.Message;
-            SetState(errorState);
-            errorCount++;
+            if (!GetAsyncInitTimedOut())
+            {
+                SetState(stateIfError);
+                errorCount++;
+            }
         }
-        dbg.fa(string.Format(
-            "{0}.{1} {2} time={3}ms {4} asyncTimedOut={5} {6}",
-            act.Target,
-            act.Method,
-            workerId,
-            (DateTime.Now-t1).TotalMilliseconds.ToString("0"),
-            GetState(),
-            GetAsyncInitTimedOut(),
-            msg
-        ));
+        // dbg.fa(string.Format(
+            // "{0}.{1} {2} time={3}ms {4} asyncTimedOut={5} {6}",
+            // act.Target,
+            // act.Method,
+            // workerId,
+            // (DateTime.Now-t1).TotalMilliseconds.ToString("0"),
+            // GetState(),
+            // GetAsyncInitTimedOut(),
+            // msg
+        // ));
     }
 
     public bool GetAsyncInitTimedOut()
@@ -138,7 +145,7 @@ public class AxCon
             return requestState;
     }
 
-    private void SetRequestState(RequestState val)
+    public void SetRequestState(RequestState val)
     {
         lock(lockOn)
             requestState = val;
@@ -159,34 +166,13 @@ public class AxCon
         ax.Logon("rba", "ru", "192.168.3.120:2714", "");
     }
 
-    public void Logoff()
+    private void Logoff()
     {
         ax.Logoff();
     }
 
-    private void Reload()
-    {
-        axClassPool = new Dictionary<string,AxaptaObject>();
-        try
-        {
-            dbg.fa("reload() before logoff");
-            Logoff();
-            dbg.fa("reload() after logoff");
-        } catch
-        {
-            dbg.fa("reload() logoff failed");
-            ax = new Axapta();
-        }
-        Logon();
-    }
-
     public Dictionary<string,object> request(string method, Dictionary<string,dynamic> prms, string id)
     {
-        Stopwatch stopWatch = new Stopwatch();
-        stopWatch.Start();
-        lastRequestStarttime = DateTime.Now;
-        lastMethod = method;
-
         clientId = null;
 
         Dictionary<string, dynamic> request = new Dictionary<string, object>() {
@@ -196,13 +182,16 @@ public class AxCon
         };
 
         log(request, "request", true);
+        log(request, "", true, true);
 
         Dictionary<string, dynamic> response = new Dictionary<string, object>() {
             {"result", null},
             {"error", null},
-            {"id", id}
+            {"id", id},
+            {"elapsed", 0}
         };
-
+        bool aReqTimedOut = false;
+        string fileSuffix;
         switch (method)
         {
             case "describe_methods":
@@ -253,76 +242,51 @@ public class AxCon
                         };
                         response["result"] = null;
                     }
+                    aReqTimedOut = GetAsyncRequestTimedOut();
+                    if (!aReqTimedOut)
+                    {
+                        SetRequestState(RequestState.WaitReq);
+                    }
                 }
                 catch (AxWarning e)
                 {
-                    log(
-                        new Dictionary<string,dynamic>(){
-                            {"message", e.Message},
-                            {"line", ""},
-                            {"trace", e.ToString()},
-                        },
-                        "error",
-                        true
-                    );
-                    response["error"] = new Dictionary<string,string>(){{"message", e.Message}};
-                    response["result"] = null;
+                    aReqTimedOut = GetAsyncRequestTimedOut();
+                    fileSuffix = !aReqTimedOut ? "error" : "error_timedout_skipped";
+                    log(e, fileSuffix, true);
+                    if (!aReqTimedOut)
+                    {
+                        SetRequestState(RequestState.WaitReq);
+                        response["error"] = new Dictionary<string,string>(){{"message", e.Message}};
+                        response["result"] = null;
+                    }
                 }
                 catch (AxException e)
                 {
-                    dbg.fa(string.Format("request() exception {0}", e.GetType().Name));
-                    log(
-                        new Dictionary<string,string>(){
-                            {"message", e.GetType() + " " + e.Message},
-                            {"line", ""},
-                            {"trace", e.ToString()},
-                        },
-                        "error",
-                        true
-                    );
-                    response["error"] = new Dictionary<string,string>(){{"message", e.Message}};
-                    response["result"] = null;
-                    errorCount++;
+                    aReqTimedOut = GetAsyncRequestTimedOut();
+                    fileSuffix = !aReqTimedOut ? "error" : "error_timedout_skipped";
+                    log(e, fileSuffix, true);
+                    if (!aReqTimedOut)
+                    {
+                        SetRequestState(RequestState.WaitReq);
+                        response["error"] = new Dictionary<string,string>(){{"message", e.Message}};
+                        response["result"] = null;
+                    }
                 }
                 catch (Exception e)
                 {
-                    dbg.fa(string.Format("request() exception {0}", e.GetType().Name));
-                    log(
-                        new Dictionary<string,string>(){
-                            {"message", e.GetType() + " " + e.Message},
-                            {"line", ""},
-                            {"trace", e.ToString()},
-                        },
-                        "fatal",
-                        true
-                    );
-                    response["error"] = new Dictionary<string,string>(){{"message", "fatal error"}};
-                    response["result"] = null;
-                    errorCount++;
-                    Reload();
+                    aReqTimedOut = GetAsyncRequestTimedOut();
+                    fileSuffix = !aReqTimedOut ? "fatal" : "fatal_timedout_skipped";
+                    log(e, fileSuffix, false);
+                    if (!aReqTimedOut)
+                    {
+                        SetRequestState(RequestState.ReqErr);
+                        requestErrorCount++;
+                        response["error"] = new Dictionary<string,string>(){{"message", "fatal error"}};
+                        response["result"] = null;
+                    }
                 }
-                
-                SetRequestState(RequestState.WaitReq);
                 msgCount++;
                 break;
-        }
-        stopWatch.Stop();
-        
-        log(
-            new Dictionary<string,dynamic>(){
-                {"response", response},
-                {"elapsed", stopWatch.ElapsedMilliseconds}
-            },
-            "response",
-            true
-        );
-        response["elapsed"] = stopWatch.ElapsedMilliseconds;
-        
-        TimeSpan last_method_duration = stopWatch.Elapsed;
-        if (longestMethod == "" || last_method_duration > longestMethodDuration)
-        {
-            longestMethod = lastMethod;
-            longestMethodDuration = last_method_duration;
         }
         return response;
     }
@@ -330,8 +294,10 @@ public class AxCon
     public Dictionary<string,dynamic> GetInfo()
     {
         return new Dictionary<string,object>() {
-            {"errorCount", errorCount},
             {"msgCount", msgCount},
+            {"errorCount", errorCount},
+            {"requestErrorCount", requestErrorCount},
+            {"requestTimedOutCount", requestTimedOutCount},
             {"lastRequestStarttime", lastRequestStarttime},
             {"lastMethod", lastMethod},
             {"longestMethod", longestMethod},
@@ -687,29 +653,41 @@ public class AxCon
     }
 
     private static object lockOnSt = new object();
-    private void log(object obj, string suf = "", bool toJSON = false)
+    public void log(object obj, string fileSuffix = "", bool toJSON = false, bool includeWorkerIdToFileName = false)
     {
-        string basename = "axcon";
-        suf = suf != "" ? "_" + suf : "";
-        string file_name = basename + suf;
+        string basename = this.GetType().Name;
+        fileSuffix = (fileSuffix != "") ? "_" + fileSuffix : "";
+        string file_name = basename + (includeWorkerIdToFileName ? workerId.ToString() : "") + fileSuffix;
+        string dir = AMQPManager.logDir + "\\" + (includeWorkerIdToFileName ? "byWorkerId\\" : "") + file_name + ".log";
         string ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        lock (lockOnSt)
+        
+        if (!includeWorkerIdToFileName)
         {
-            using (StreamWriter writer = new StreamWriter(AMQPManager.logDir + "/" + file_name + ".log", true))
+            Monitor.Enter(lockOnSt);
+        }
+        try
+        {
+            using (StreamWriter writer = new StreamWriter(dir, true))
             {
                 if (!toJSON)
                 {
-                    writer.WriteLine("{0};{1};{2}", ts, workerId, obj.ToString());
+                    writer.WriteLine("{0};{1,3};{2}", ts, workerId, obj.ToString());
                 }
                 else
                 {
                     JSONParameters prms = new JSONParameters();
                     prms.UseEscapedUnicode = false;
-                    writer.WriteLine("{0};{1};{2}", ts, workerId, JSON.ToNiceJSON(obj, prms));
+                    writer.WriteLine("{0};{1,3};{2}", ts, workerId, JSON.ToJSON(obj, prms));
                 }
             }
         }
-
+        finally
+        {
+            if (!includeWorkerIdToFileName)
+            {
+                Monitor.Exit(lockOnSt);
+            }
+        }
         /*
         if (fatal)
         {

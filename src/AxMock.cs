@@ -7,7 +7,11 @@ using System.Threading;
 namespace Microsoft.Dynamics.BusinessConnectorNet {
     class Axapta {
         public static dynamic methods_config;
-        
+        public static Random random = new Random();
+        public static int rnd(int a, int b)
+        {
+            return random.Next(a, b);
+        }
         public Axapta(dynamic methods_conf = null)
         {
             methods_config = methods_conf;
@@ -15,14 +19,21 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
        
         public bool Logon(string str1, string str2, string str3, string str4)
         {
-            Thread.Sleep(100 * new Random().Next(1,10));
-            // throw new Exception("Logon exception");
+            Thread.Sleep(100 * rnd(1,20));
+            
+            if (rnd(0, 6) == 0)
+            {
+                throw new Exception("Logon exception");
+            }
             return true;
         }
         public bool Logoff()
         {
-            Thread.Sleep(100 * new Random().Next(1,10));
-            // throw new Exception("Logoff exception");
+            Thread.Sleep(100 * rnd(1,20));
+            if (rnd(0, 6) == 0)
+            {
+                throw new Exception("Logoff exception");
+            }
             return true;
         }
         public AxaptaObject CreateAxaptaObject(string objName)
@@ -36,6 +47,7 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
     class AxaptaObject
     {
         public string Name {get; set;}
+        public Random rnd = new Random();
         
         public AxaptaObject(string objName)
         {
@@ -45,8 +57,11 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         {
             if (method == "run")
             {
-                var rnd = new Random();
-                Thread.Sleep(100 * rnd.Next(0, 20));
+                Thread.Sleep(100 * Axapta.rnd(1, 20));
+                if (Axapta.rnd(0, 6) == 0)
+                {
+                    throw new Exception("Call exception");
+                }
             }
             dynamic result = "";
             var outTypeName = GetOutputValueTypeName(method);
