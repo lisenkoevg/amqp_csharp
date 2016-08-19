@@ -52,7 +52,7 @@ public class AxCon
         ax = new Axapta();
         axClassPool = new Dictionary<string,AxaptaObject>();
         #if AxMock
-        ax = new Axapta(config["methods"]);
+        ax = new Axapta(config["methods"], isThrowExceptions: true);
         #endif
     }
 
@@ -68,8 +68,8 @@ public class AxCon
 
     private void InitOrFinAction(Action act, State stateBefore, State stateAfter, RequestState requestStateAfter, State stateIfError)
     {
+        // Stopwatch s = Stopwatch.StartNew();
         string msg = "";
-        var t1 = DateTime.Now;
         try
         {
             SetState(stateBefore);
@@ -91,7 +91,7 @@ public class AxCon
         // catch (SessionTerminatedException e)
         catch (Exception e)
         {
-            log(e, "err");
+            log(e, "error");
             msg = e.GetType().Name + " " + e.Message;
             if (!GetAsyncInitTimedOut())
             {
@@ -99,12 +99,13 @@ public class AxCon
                 errorCount++;
             }
         }
+        // s.Stop();
         // dbg.fa(string.Format(
             // "{0}.{1} {2} time={3}ms {4} asyncTimedOut={5} {6}",
             // act.Target,
             // act.Method,
             // workerId,
-            // (DateTime.Now-t1).TotalMilliseconds.ToString("0"),
+            // s.ElapsedMilliseconds.ToString("0"),
             // GetState(),
             // GetAsyncInitTimedOut(),
             // msg
@@ -263,7 +264,7 @@ public class AxCon
                 catch (AxException e)
                 {
                     aReqTimedOut = GetAsyncRequestTimedOut();
-                    fileSuffix = !aReqTimedOut ? "error" : "error_timedout_skipped";
+                    fileSuffix = !aReqTimedOut ? "request_error" : "error_timedout_skipped";
                     log(e, fileSuffix, true);
                     if (!aReqTimedOut)
                     {
@@ -275,7 +276,7 @@ public class AxCon
                 catch (Exception e)
                 {
                     aReqTimedOut = GetAsyncRequestTimedOut();
-                    fileSuffix = !aReqTimedOut ? "fatal" : "fatal_timedout_skipped";
+                    fileSuffix = !aReqTimedOut ? "request_fatal" : "request_fatal_timedout_skipped";
                     log(e, fileSuffix, false);
                     if (!aReqTimedOut)
                     {
@@ -655,11 +656,14 @@ public class AxCon
     private static object lockOnSt = new object();
     public void log(object obj, string fileSuffix = "", bool toJSON = false, bool includeWorkerIdToFileName = false)
     {
-        string basename = this.GetType().Name;
         fileSuffix = (fileSuffix != "") ? "_" + fileSuffix : "";
-        string file_name = basename + (includeWorkerIdToFileName ? workerId.ToString() : "") + fileSuffix;
-        string dir = AMQPManager.logDir + "\\" + (includeWorkerIdToFileName ? "byWorkerId\\" : "") + file_name + ".log";
-        string ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        DateTime dtNow = DateTime.Now;
+        string timestamp = dtNow.ToString("yyyy-MM-dd HH:mm:ss");
+        string basename = this.GetType().Name;
+        string file_name = basename + (includeWorkerIdToFileName ? workerId.ToString() : "") + fileSuffix + ".log";
+        string dir = AMQPManager.logDir + "\\" + dtNow.ToString("yyyyMMdd") + "\\" + (includeWorkerIdToFileName ? "byWorkerId" : "");
+        //TODO move directory creation to another place
+        Directory.CreateDirectory(dir);
         
         if (!includeWorkerIdToFileName)
         {
@@ -667,17 +671,17 @@ public class AxCon
         }
         try
         {
-            using (StreamWriter writer = new StreamWriter(dir, true))
+            using (StreamWriter writer = new StreamWriter(dir + "\\" + file_name, true))
             {
                 if (!toJSON)
                 {
-                    writer.WriteLine("{0};{1,3};{2}", ts, workerId, obj.ToString());
+                    writer.WriteLine("{0};{1,3};{2}", timestamp, workerId, obj.ToString());
                 }
                 else
                 {
                     JSONParameters prms = new JSONParameters();
                     prms.UseEscapedUnicode = false;
-                    writer.WriteLine("{0};{1,3};{2}", ts, workerId, JSON.ToJSON(obj, prms));
+                    writer.WriteLine("{0};{1,3};{2}", timestamp, workerId, JSON.ToJSON(obj, prms));
                 }
             }
         }

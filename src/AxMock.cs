@@ -8,20 +8,22 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
     class Axapta {
         public static dynamic methods_config;
         public static Random random = new Random();
+        public static bool isThrowExceptions;
         public static int rnd(int a, int b)
         {
             return random.Next(a, b);
         }
-        public Axapta(dynamic methods_conf = null)
+        public Axapta(dynamic methods_conf = null, bool isThrowExceptions = true)
         {
             methods_config = methods_conf;
+            Axapta.isThrowExceptions = isThrowExceptions;
         }
        
         public bool Logon(string str1, string str2, string str3, string str4)
         {
             Thread.Sleep(100 * rnd(1,20));
             
-            if (rnd(0, 6) == 0)
+            if (Axapta.isThrowExceptions && rnd(0, 6) == 0)
             {
                 throw new Exception("Logon exception");
             }
@@ -30,7 +32,7 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         public bool Logoff()
         {
             Thread.Sleep(100 * rnd(1,20));
-            if (rnd(0, 6) == 0)
+            if (Axapta.isThrowExceptions && rnd(0, 6) == 0)
             {
                 throw new Exception("Logoff exception");
             }
@@ -58,7 +60,7 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
             if (method == "run")
             {
                 Thread.Sleep(100 * Axapta.rnd(1, 20));
-                if (Axapta.rnd(0, 6) == 0)
+                if (Axapta.isThrowExceptions && Axapta.rnd(0, 6) == 0)
                 {
                     throw new Exception("Call exception");
                 }

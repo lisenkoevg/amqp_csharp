@@ -29,7 +29,8 @@ public class AMQP
     private IConnection connection;
     private IModel channel;
     private EventingBasicConsumer consumer;
-
+    private string consumerTag = "";
+    
     public AMQP(int workerId)
     {
         this.workerId = workerId;
@@ -50,7 +51,6 @@ public class AMQP
             SetState(State.Connect);
             connection = factory.CreateConnection();
             channel = connection.CreateModel();
-            // channel.QueueDeclare(queue: queue, durable: true, exclusive: false, autoDelete: false, arguments: null);
             consumer = new EventingBasicConsumer(channel);
             consumer.Received += ReceivedHandler;
             channel.BasicQos(prefetchSize: 0, prefetchCount: 1, global: false);
@@ -73,7 +73,7 @@ public class AMQP
             {
                 SetState(State.InitError);
             }
-            log(e, "err");
+            log(e, "error");
             errorCount++;
         }
         // dbg.fa(string.Format(
@@ -93,31 +93,15 @@ public class AMQP
 
     private void Work()
     {
-        if (connection.IsOpen && channel.IsOpen)
+        if (StartConsume())
         {
-            try
-            {
-                channel.BasicConsume(
-                    queue: queue,
-                    noAck: false,
-                    consumer: consumer
-                );
-                SetState(State.Running);
-            }
-            // catch (BrokerUnreachableException e)
-            // catch (AlreadyClosedException e)
-            catch (Exception e)
-            {
-                SetState(State.Error);
-                log(e, "err");
-                errorCount++;
-            }
+            SetState(State.Running);
         }
         else
         {
-            dbg.fa("Connection and/or channel are closed A " + GetState());
             SetState(State.Error);
             errorCount++;
+            dbg.fa("Connection and/or channel are closed" + GetState());
         }
 
         var state = GetState();
@@ -125,7 +109,7 @@ public class AMQP
         {
             if (!connection.IsOpen || !channel.IsOpen)
             {
-                log("Connection and/or channel are closed A " + state, "err");
+                log("Connection and/or channel are closed" + state, "error");
                 SetState(State.Error);
                 errorCount++;
             }
@@ -140,53 +124,104 @@ public class AMQP
         }
     }
 
+    private bool StartConsume()
+    {
+        bool result;
+        lock (lockOn)
+        {
+            if (consumerTag == "" && channel.IsOpen)
+            {
+                consumerTag = channel.BasicConsume(
+                    queue: queue,
+                    noAck: false,
+                    consumer: consumer
+                );
+                result = true;
+            }
+            else
+            {
+                result = false;
+            }
+        }
+        return result;
+    }
+    
+    private bool StopConsume()
+    {
+        bool result;
+        lock (lockOn)
+        {
+            if (consumerTag != "" && channel.IsOpen)
+            {
+                channel.BasicCancel(consumerTag);
+                consumerTag = "";
+                result = true;
+            }
+            else
+            {
+                result = false;
+                dbg.fa(string.Format(
+                    "StopConsume() failed consumerTag={0} channel.IsOpen={1} workerId={2}",
+                    consumerTag,
+                    channel.IsOpen,
+                    workerId
+                ));
+            }
+        }
+        return result;
+    }
+    
     private void ReceivedHandler(object model, BasicDeliverEventArgs ea)
     {
-        State state = GetState();
+        // EventingBasicConsumer consumer = (EventingBasicConsumer) model;
+        // IModel channel = consumer.Model;
+        string method = "";
         try
         {
-            if (state == State.Paused || state == State.ForcePaused || state != State.Running)
-            {
-                Thread.Sleep(100);
-                channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
-                return;
-            }
             msgInQueue = channel.MessageCount(queue);
-            isProcessing = true;
             string message = Encoding.UTF8.GetString(ea.Body);
             IBasicProperties props = ea.BasicProperties;
             string ReplyTo = props.IsReplyToPresent() ? props.ReplyTo : "";
             string CorrelationId = props.IsCorrelationIdPresent() ? props.CorrelationId : "";
             IDictionary<string,dynamic> headers = props.IsHeadersPresent()
                 ? props.Headers : new Dictionary<string,object>();
-            string method = headers.ContainsKey("method")
+            method = headers.ContainsKey("method")
                 ? Encoding.UTF8.GetString(headers["method"]) : "";
             string rpc_id = headers.ContainsKey("rpc_id")
                 ? Encoding.UTF8.GetString(headers["rpc_id"]) : "";
 
-            dynamic request = JSON.Parse(message);
-
-            channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
-            Dictionary<string,dynamic> responseObj = OnAxRequest(this, method, request, rpc_id);
-            string response = JSON.ToJSON(responseObj);
-            if (ReplyTo != "" && CorrelationId != "")
+            State state = GetState();
+            if (state != State.Paused && state != State.ForcePaused)
             {
-                props = channel.CreateBasicProperties();
-                props.CorrelationId = CorrelationId;
-                channel.BasicPublish(
-                    exchange: "",
-                    routingKey: ReplyTo,
-                    basicProperties: props,
-                    body: Encoding.UTF8.GetBytes(response)
-                );
+                dynamic request = JSON.Parse(message);
+                channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                isProcessing = true;
+                Dictionary<string,dynamic> responseObj = OnAxRequest(this, method, request, rpc_id);
+                string response = JSON.ToJSON(responseObj);
+                if (ReplyTo != "" && CorrelationId != "")
+                {
+                    props = channel.CreateBasicProperties();
+                    props.CorrelationId = CorrelationId;
+                    channel.BasicPublish(
+                        exchange: "",
+                        routingKey: ReplyTo,
+                        basicProperties: props,
+                        body: Encoding.UTF8.GetBytes(response)
+                    );
+                }
+                msgCount++;
             }
-            msgCount++;
+            else
+            {
+                dbg.fa("BasicNack workerId=" + workerId + " method=" + method);
+                channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
+            }
         }
         // catch (AlreadyClosedException e)
         catch (Exception e)
         {
             SetState(State.Error);
-            log(e, "err");
+            log(e, "error");
             errorCount++;
         }
         finally
@@ -226,28 +261,44 @@ public class AMQP
 
     public void ForcePause()
     {
-        SetState(State.ForcePaused);
+        lock (lockOn)
+        {
+            StopConsume();
+            SetState(State.ForcePaused);
+        }
     }
 
     public void ForceResume()
     {
-        SetState(State.Running);
+        lock (lockOn)
+        {
+            StartConsume();
+            SetState(State.Running);
+        }
     }
 
     public void TryDisconnect()
     {
-        if (connection != null && connection.IsOpen)
+        try
         {
-            connection.Dispose();
+            if (channel != null && channel.IsOpen)
+            {
+                channel.Dispose();
+            }
+            if (connection != null && connection.IsOpen)
+            {
+                connection.Dispose();
+            }
+        }
+        catch (Exception e)
+        {
+            dbg.fa(e);
         }
     }
 
     public void StopPend()
     {
-        if (consumer != null)
-        {
-            consumer.Received -= ReceivedHandler;
-        }
+        StopConsume();
         lock (lockOn)
         {
             State state = GetState();
@@ -269,10 +320,12 @@ public class AMQP
         {
             if (state == State.Running)
             {
+                StopConsume();
                 state = State.Paused;
             }
             else if (state == State.Paused)
             {
+                StartConsume();
                 state = State.Running;
             }
         }
@@ -285,17 +338,20 @@ public class AMQP
     }
 
     private static object lockOnSt = new Object();
-    private void log(object obj, string suf = "")
+    public void log(object obj, string fileSuffix = "")
     {
+        fileSuffix = (fileSuffix != "") ? "_" + fileSuffix : "";
+        DateTime dtNow = DateTime.Now;
+        string timestamp = dtNow.ToString("yyyy-MM-dd HH:mm:ss");
         string basename = this.GetType().Name;
-        suf = suf != "" ? "_" + suf : "";
-        string file_name = basename + suf;
-        string ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        string file_name = basename + fileSuffix + ".log";
+        string dir = AMQPManager.logDir + "\\" + dtNow.ToString("yyyyMMdd");
+        
         lock (lockOnSt)
         {
-            using (StreamWriter writer = new StreamWriter(AMQPManager.logDir + "/" + file_name + ".log", true))
+            using (StreamWriter writer = new StreamWriter(dir + "\\" + file_name, true))
             {
-                writer.WriteLine("{0};{1};{2}", ts, workerId, obj.ToString());
+                writer.WriteLine("{0};{1};{2}", timestamp, workerId, obj.ToString());
             }
         }
     }

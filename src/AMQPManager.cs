@@ -50,7 +50,6 @@ public class AMQPManager
     {
         ChDir();
         Directory.CreateDirectory(logDir);
-        Directory.CreateDirectory(logDir + "\\byWorkerId");
 
         int count;
         AMQPManager am;
@@ -361,6 +360,10 @@ public class AMQPManager
                     bool waitSuccess = task.Wait(amqpInitTimeout);
                     amqp.SetAsyncInitTimedOut(!waitSuccess);
                     task.Wait();
+                    if (!waitSuccess)
+                    {
+                        amqp.log("Connection timeout workerId=" + amqp.workerId, "error");
+                    }
                 }
             );
         }
@@ -368,15 +371,15 @@ public class AMQPManager
 
     private void ScheduleInitWorkerAxCon(AxCon axcon)
     {
-        ScheduleInitOrFinWorkerAxCon(axcon, axcon.Init);
+        ScheduleInitOrFinWorkerAxCon(axcon, axcon.Init, AxCon.State.Login);
     }
 
     private void ScheduleFinWorkerAxCon(AxCon axcon)
     {
-        ScheduleInitOrFinWorkerAxCon(axcon, axcon.Fin);
+        ScheduleInitOrFinWorkerAxCon(axcon, axcon.Fin, AxCon.State.Logoff);
     }
     
-    private void ScheduleInitOrFinWorkerAxCon(AxCon axcon, Action action)
+    private void ScheduleInitOrFinWorkerAxCon(AxCon axcon, Action action, AxCon.State stateBefore)
     {
         if (!IsAsyncTaskChainRunning())
         {
@@ -386,8 +389,20 @@ public class AMQPManager
                     axcon.SetAsyncInitTimedOut(false);
                     Task task = Task.Factory.StartNew(action);
                     bool waitSuccess = task.Wait(axconInitTimeout);
-                    axcon.SetAsyncInitTimedOut(!waitSuccess);
+                    
+                    if (axcon.GetState() == stateBefore)
+                    {
+                        axcon.SetAsyncInitTimedOut(!waitSuccess);
+                    }
+                    else
+                    {
+                        // Low probability situation when operation finished exactly in timeout ms time period
+                    }
                     task.Wait();
+                    if (!waitSuccess)
+                    {
+                        axcon.log(action.Method + " timeout workerId=" + axcon.workerId, "error");
+                    }
                 }
             );
         }
@@ -825,7 +840,7 @@ public class AMQPManager
             IsAsyncTaskChainRunning() ? "Async task running..." : ""
         ));
         output.AppendLine(string.Format(
-            "Summary: workers={0} amqpMsg={1} axMsg={2} amqpErr={3} axErr={4} axRequestError={5} axReqTimedOut={6} msgInQueue<{7}>~{8}",
+            "Summary: workers={0} amqpMsg={1} axMsg={2} amqpConnErr={3} axConnErr={4} axRequestError={5} axReqTimedOut={6} msgInQueue<{7}>~{8}",
             workersCount,
             total["amqpMsgCount"],
             total["axMsgCount"],
