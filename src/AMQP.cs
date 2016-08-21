@@ -29,7 +29,7 @@ public class AMQP
     private IConnection connection;
     private IModel channel;
     private EventingBasicConsumer consumer;
-    private string consumerTag = "";
+    private string consumerTag;
     
     public AMQP(int workerId)
     {
@@ -97,12 +97,6 @@ public class AMQP
         {
             SetState(State.Running);
         }
-        else
-        {
-            SetState(State.Error);
-            errorCount++;
-            dbg.fa("Connection and/or channel are closed" + GetState());
-        }
 
         var state = GetState();
         while (state == State.Running || state == State.Paused || state == State.ForcePaused || IsProcessing())
@@ -126,21 +120,40 @@ public class AMQP
 
     private bool StartConsume()
     {
-        bool result;
+        bool result = false;
         lock (lockOn)
         {
-            if (consumerTag == "" && channel.IsOpen)
+            if (connection.IsOpen && channel.IsOpen)
             {
-                consumerTag = channel.BasicConsume(
-                    queue: queue,
-                    noAck: false,
-                    consumer: consumer
-                );
-                result = true;
+                if (consumerTag == "" || consumerTag == null)
+                {
+                    try
+                    {
+                        consumerTag = channel.BasicConsume(
+                            queue: queue,
+                            noAck: false,
+                            consumer: consumer
+                        );
+                        result = true;
+                    }
+                    catch (Exception e)
+                    {
+                        SetState(State.Error);
+                        errorCount++;
+                        log(e, "error");
+                    }
+                }
+                else
+                {
+                    SetState(State.Error);
+                    dbg.fa("StartConsume() without corresponding StopConsume()");
+                }
             }
             else
             {
-                result = false;
+                log("Connection and/or channel are closed " + GetState(), "error");
+                SetState(State.Error);
+                errorCount++;
             }
         }
         return result;
@@ -148,24 +161,37 @@ public class AMQP
     
     private bool StopConsume()
     {
-        bool result;
+        bool result = false;
         lock (lockOn)
         {
-            if (consumerTag != "" && channel.IsOpen)
+            if (connection.IsOpen && channel.IsOpen)
             {
-                channel.BasicCancel(consumerTag);
-                consumerTag = "";
-                result = true;
+                if (consumerTag != "")
+                {
+                    try
+                    {
+                        channel.BasicCancel(consumerTag);
+                        consumerTag = "";
+                        result = true;
+                    }
+                    catch (Exception e)
+                    {
+                        SetState(State.Error);
+                        errorCount++;
+                        log(e, "error");
+                    }
+                }
+                else
+                {
+                    SetState(State.Error);
+                    dbg.fa("StopConsume() without corresponding StartConsume()");
+                }
             }
             else
             {
-                result = false;
-                dbg.fa(string.Format(
-                    "StopConsume() failed consumerTag={0} channel.IsOpen={1} workerId={2}",
-                    consumerTag,
-                    channel.IsOpen,
-                    workerId
-                ));
+                log("Connection and/or channel are closed " + GetState(), "error");
+                SetState(State.Error);
+                errorCount++;
             }
         }
         return result;
@@ -191,7 +217,7 @@ public class AMQP
                 ? Encoding.UTF8.GetString(headers["rpc_id"]) : "";
 
             State state = GetState();
-            if (state != State.Paused && state != State.ForcePaused)
+            if (state != State.Paused && state != State.ForcePaused && state == State.Running)
             {
                 dynamic request = JSON.Parse(message);
                 channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
@@ -213,7 +239,7 @@ public class AMQP
             }
             else
             {
-                dbg.fa("BasicNack workerId=" + workerId + " method=" + method);
+                dbg.fa("BasicNack workerId=" + workerId + " method=" + method + " state=" + state);
                 channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
             }
         }
@@ -263,8 +289,10 @@ public class AMQP
     {
         lock (lockOn)
         {
-            StopConsume();
-            SetState(State.ForcePaused);
+            if (StopConsume())
+            {
+                SetState(State.ForcePaused);
+            }
         }
     }
 
@@ -272,8 +300,10 @@ public class AMQP
     {
         lock (lockOn)
         {
-            StartConsume();
-            SetState(State.Running);
+            if (StartConsume())
+            {
+                SetState(State.Running);
+            }
         }
     }
 
