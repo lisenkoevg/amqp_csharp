@@ -1,5 +1,6 @@
 using System;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Collections;
 
 public static class Util
@@ -76,5 +77,15 @@ public static class Util
             }
             return sb.ToString();
         }
+    }
+
+    public static string RemoveVowels(string s)
+    {
+        string result = null;
+        if (s != null)
+        {
+            result = Regex.Replace(s, "[aeiouy]", "", RegexOptions.IgnoreCase);
+        }
+        return result;
     }
 }

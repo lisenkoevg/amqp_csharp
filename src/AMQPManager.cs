@@ -440,7 +440,7 @@ public class AMQPManager
         AxCon axcon = axconDic[amqp.workerId];
 
         axcon.lastRequestStarttime = DateTime.Now;
-        axcon.lastMethod = method;
+        axcon.lastMethod = Util.RemoveVowels(method);
 
         var response = new Dictionary<string,object>();
         axcon.SetAsyncRequestTimedOut(false);
@@ -750,7 +750,7 @@ public class AMQPManager
             return;
         }
         output.Clear();
-        string tmpl = "{0,3} {1,-14} {2,6} {3,6} {4,3} {5,4} {6,7} {7,-10} {8,2} {9,-7} {10,-8} {11,-8} {12,6} {13,-19} {14,-19} {0,3}";
+        string tmpl = "{0,3} {1,-14} {2,6} {3,6} {4,3} {5,4} {6,7} {7,-10} {8,-7} {9,-8} {10,-8} {11,6} {12,-14} {13,-14} {0,3}";
         string head = string.Format(
             tmpl,
             "no",
@@ -761,7 +761,6 @@ public class AMQPManager
             "axEr",
             "axRE/TO",
             "aState",
-            "aP",
             "axState",
             "axReqSt",
             "reqStart",
@@ -794,7 +793,7 @@ public class AMQPManager
                 AMQP.State amqpState = amqp.GetState();
                 AxCon.State axconState = axcon.GetState();
                 AxCon.RequestState axconRequestState = axcon.GetRequestState();
-                string amqpStateStr = (amqp.GetAsyncInitTimedOut() ? "!" : "") + amqpState.ToString();
+                string amqpStateStr = (amqp.GetAsyncInitTimedOut() ? "!" : "") + amqpState.ToString() + (amqp.IsProcessing() ? "+" : "");
                 string axconStateStr = (axcon.GetAsyncInitTimedOut() ? "!" : "") + axconState.ToString();
                 string axconRequestStateStr = (axconRequestState == AxCon.RequestState.NotApplicable) ? "" : axconRequestState.ToString();
                 axconRequestStateStr = (axcon.GetAsyncRequestTimedOut() ? "!" : "") + axconRequestStateStr;
@@ -813,13 +812,12 @@ public class AMQPManager
                     axInfo["errorCount"],
                     axInfo["requestErrorCount"].ToString() + "/" + axInfo["requestTimedOutCount"].ToString(),
                     amqpStateStr.Length <= 10 ? amqpStateStr : amqpStateStr.Substring(0, 10),
-                    amqp.IsProcessing() ? "y" : "",
                     axconStateStr.Length <= 7 ? axconStateStr : axconStateStr.Substring(0, 7),
                     axconRequestStateStr.Length <= 8 ? axconRequestStateStr : axconRequestStateStr.Substring(0, 8),
                     axInfo["lastRequestStarttime"] != default(DateTime) ? axInfo["lastRequestStarttime"].ToString("HH:mm:ss") : "",
                     axconRequestState == AxCon.RequestState.Request && current_req_duration > 0 ? current_req_duration.ToString("0.0") : "",
-                    method.Length <= 19 ? method : method.Substring(0, 19),
-                    longestMethod.Length <= 19 ? longestMethod : longestMethod.Substring(0, 19)
+                    method.Length <= 14 ? method : method.Substring(0, 14),
+                    longestMethod.Length <= 14 ? longestMethod : longestMethod.Substring(0, 14)
                 ));
                 if (amqpState != AMQP.State.Running && amqpState != AMQP.State.Paused)
                 {
@@ -838,7 +836,7 @@ public class AMQPManager
             exitScheduled ? "Exiting..." : "",
             isWaitingWorkersExists ? "Init/start/stop scheduled... " : "",
             IsAsyncTaskChainRunning() ? "Async task running..." : ""
-        ));
+        ).Trim());
         output.AppendLine(string.Format(
             "Summary: workers={0} amqpMsg={1} axMsg={2} amqpConnErr={3} axConnErr={4} axRequestError={5} axReqTimedOut={6} msgInQueue<{7}>~{8}",
             workersCount,
