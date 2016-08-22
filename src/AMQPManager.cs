@@ -152,13 +152,13 @@ public class AMQPManager
     {
         for (int i = 0; i < count; i++)
         {
+            if (GetWorkersCount() >= maxWorkersCount || exitScheduled) break;
             CreateWorker();
         }
     }
 
     private void CreateWorker()
     {
-        if (GetWorkersCount() >= maxWorkersCount) return;
         lock (lockOn)
         {
             int workerId = GetWorkerId();
@@ -189,6 +189,11 @@ public class AMQPManager
         if (IsAsyncTaskChainReady())
         {
             asyncTaskChainHead.Start();
+        }
+        if (exitScheduled && list.Count == 0)
+        {
+            inputAutoResetEvent.Set();
+            outputAutoResetEvent.Set();
         }
     }
 
@@ -378,7 +383,7 @@ public class AMQPManager
     {
         ScheduleInitOrFinWorkerAxCon(axcon, axcon.Fin, AxCon.State.Logoff);
     }
-    
+
     private void ScheduleInitOrFinWorkerAxCon(AxCon axcon, Action action, AxCon.State stateBefore)
     {
         if (!IsAsyncTaskChainRunning())
@@ -389,7 +394,7 @@ public class AMQPManager
                     axcon.SetAsyncInitTimedOut(false);
                     Task task = Task.Factory.StartNew(action);
                     bool waitSuccess = task.Wait(axconInitTimeout);
-                    
+
                     if (axcon.GetState() == stateBefore)
                     {
                         axcon.SetAsyncInitTimedOut(!waitSuccess);
@@ -421,11 +426,6 @@ public class AMQPManager
             amqpDic.Remove(a.workerId);
             axconDic.Remove(a.workerId);
             workersCount--;
-        }
-        if (exitScheduled && workersCount == 0)
-        {
-            inputAutoResetEvent.Set();
-            outputAutoResetEvent.Set();
         }
     }
 
@@ -750,7 +750,7 @@ public class AMQPManager
             return;
         }
         output.Clear();
-        string tmpl = "{0,3} {1,-14} {2,6} {3,6} {4,3} {5,4} {6,7} {7,-10} {8,-7} {9,-8} {10,-8} {11,6} {12,-14} {13,-14} {0,3}";
+        string tmpl = "{0,3} {1,-14} {2,6} {3,6} {4,3} {5,4} {6,7} {7,-10} {8,-7} {9,-8} {10,-8} {11,6} {12,-14} {13,-18} {0,3}";
         string head = string.Format(
             tmpl,
             "no",
@@ -802,6 +802,12 @@ public class AMQPManager
                     : 0;
                 string method = axconRequestState == AxCon.RequestState.Request ? axInfo["lastMethod"].Replace("cmpECommerce", "").Trim('_') : "";
                 string longestMethod = axInfo["longestMethod"].Replace("cmpECommerce", "").Trim('_');
+                longestMethod = longestMethod.Length <= 14 ? longestMethod : longestMethod.Substring(0, 14);
+                longestMethod += (axInfo["longestMethodDuration"] != default(TimeSpan)
+                    ? "|" + (axInfo["longestMethodDuration"].TotalSeconds < 99
+                        ? axInfo["longestMethodDuration"].TotalSeconds.ToString("0")
+                        : "99")
+                    : "" );
                 output.AppendLine(string.Format(
                     tmpl,
                     amqp.workerId,
@@ -817,7 +823,8 @@ public class AMQPManager
                     axInfo["lastRequestStarttime"] != default(DateTime) ? axInfo["lastRequestStarttime"].ToString("HH:mm:ss") : "",
                     axconRequestState == AxCon.RequestState.Request && current_req_duration > 0 ? current_req_duration.ToString("0.0") : "",
                     method.Length <= 14 ? method : method.Substring(0, 14),
-                    longestMethod.Length <= 14 ? longestMethod : longestMethod.Substring(0, 14)
+                    longestMethod
+                    
                 ));
                 if (amqpState != AMQP.State.Running && amqpState != AMQP.State.Paused)
                 {
@@ -858,11 +865,12 @@ public class AMQPManager
             startupWorkersCount
         ));
         output.AppendLine(string.Format(
-            "Screen update period: {0}s running: {1:d\\.hh\\:mm\\:ss} heap={2:0.0}MB private={3:0.0}MB",
+            "Screen update period: {0}s running: {1:d\\.hh\\:mm\\:ss} heap={2:0.0}MB", //private={3:0.0}MB threads={4}
             System.Math.Round(updateScreenPeriod / 1000.0, 1),
             (dtNow - startTime),
-            System.Math.Round(Convert.ToSingle(GC.GetTotalMemory(false)) / 1024 / 1024, 1),
-            System.Math.Round(Convert.ToSingle(cur_proc.PrivateMemorySize64) / 1024 / 1024, 1)            
+            System.Math.Round(Convert.ToSingle(GC.GetTotalMemory(false)) / 1024 / 1024, 1)
+            // System.Math.Round(Convert.ToSingle(cur_proc.PrivateMemorySize64) / 1024 / 1024, 1)
+            // cur_proc.Threads.Count
         ));
         output.AppendLine("\n?: a: start new worker, d - stop one running worker, <id>d: stop worker by <id>");
         output.AppendLine("?: Ctrl-r: restart all workers, Ctrl-q: stop all workers and exit");

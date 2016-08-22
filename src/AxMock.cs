@@ -23,7 +23,7 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         {
             Thread.Sleep(100 * rnd(1,20));
             
-            if (Axapta.isThrowExceptions && rnd(0, 6) == 0)
+            if (Axapta.isThrowExceptions && rnd(0, 8) == 0)
             {
                 throw new Exception("Logon exception");
             }
@@ -32,7 +32,7 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         public bool Logoff()
         {
             Thread.Sleep(100 * rnd(1,20));
-            if (Axapta.isThrowExceptions && rnd(0, 6) == 0)
+            if (Axapta.isThrowExceptions && rnd(0, 8) == 0)
             {
                 throw new Exception("Logoff exception");
             }
@@ -60,7 +60,7 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
             if (method == "run")
             {
                 Thread.Sleep(100 * Axapta.rnd(1, 20));
-                if (Axapta.isThrowExceptions && Axapta.rnd(0, 6) == 0)
+                if (Axapta.isThrowExceptions && Axapta.rnd(0, 8) == 0)
                 {
                     throw new Exception("Call exception");
                 }
