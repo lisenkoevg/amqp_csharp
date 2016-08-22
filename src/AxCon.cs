@@ -196,14 +196,10 @@ public class AxCon
         switch (method)
         {
             case "describe_methods":
-                response["result"] = config;
-                break;
-            case "batch":
-                response["result"] = new List<object>();
-                foreach (dynamic sub_param in request["params"])
-                {
-                    response["result"].Add(this.request(sub_param["method"], sub_param["params"], sub_param["id"]));
-                }
+                response["result"] = new Dictionary<string,object>() {
+                    {"enums", config["enums"]},
+                    {"methods", config["methods"]}
+                };
                 break;
             default:
                 SetRequestState(RequestState.Request);
@@ -286,9 +282,9 @@ public class AxCon
                         response["result"] = null;
                     }
                 }
-                msgCount++;
                 break;
         }
+        msgCount++;
         return response;
     }
 
