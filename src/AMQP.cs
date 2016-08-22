@@ -103,7 +103,8 @@ public class AMQP
         {
             if (!connection.IsOpen || !channel.IsOpen)
             {
-                log("Connection and/or channel are closed" + state, "error");
+                log("Connection and/or channel are closed " + state, "error");
+                StopConsume();
                 SetState(State.Error);
                 errorCount++;
             }
@@ -145,7 +146,6 @@ public class AMQP
                 }
                 else
                 {
-                    SetState(State.Error);
                     dbg.fa("StartConsume() without corresponding StopConsume()");
                 }
             }
@@ -183,7 +183,6 @@ public class AMQP
                 }
                 else
                 {
-                    SetState(State.Error);
                     dbg.fa("StopConsume() without corresponding StartConsume()");
                 }
             }
@@ -246,6 +245,7 @@ public class AMQP
         // catch (AlreadyClosedException e)
         catch (Exception e)
         {
+            StopConsume();
             SetState(State.Error);
             log(e, "error");
             errorCount++;
@@ -376,6 +376,7 @@ public class AMQP
         string basename = this.GetType().Name;
         string file_name = basename + fileSuffix + ".log";
         string dir = AMQPManager.logDir + "\\" + dtNow.ToString("yyyyMMdd");
+        Directory.CreateDirectory(dir);
         
         lock (lockOnSt)
         {
