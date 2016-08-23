@@ -13,7 +13,7 @@ Fix setter:
 application_area_mandatory:
     getter: getApplAreaMandatory
     setter: getApplAreaMandatory
-    
+
 Add single quotes (need for YamlDotNet.Serialization.Deserializer):
 segment:
 ...
@@ -24,7 +24,7 @@ output
     discontinued
     regulations
  declared type is boolean, but returns int
- 
+
  search_item_name_h.yaml
      application_area_mandatory Int32
     reserve_control Int32
@@ -48,7 +48,7 @@ class ConfigLoader
         foreach (FileInfo f in files) {
             result["methods"][f.Name.Replace(f.Extension, "")] =  LoadFile(f.FullName);
         }
-        
+
         h2a(result["methods"], "methods", fields);
 
         Dictionary<string,List<string>> legacy_enums = new Dictionary<string,List<string>>();
@@ -69,7 +69,7 @@ class ConfigLoader
     public static dynamic LoadFile(string path)
     {
         dynamic result;
-        
+
         var deserializer = new Deserializer();
         dynamic yamlObject = new Object();
         try
@@ -89,19 +89,14 @@ class ConfigLoader
         result = JSON.Parse(str.ToString());
         return result;
     }
-    
-    // public static dynamic tmp = new Dictionary<string,dynamic>() {
-        // {"input", ""},
-        // {"output", ""},
-        // {"content", ""},
-    // };
+
     public static object h2a(dynamic a, string key, dynamic fields, dynamic parent = null)
     {
         if (( key == "input") || ( key == "output") || ( key == "content"))
         {
             Debug.Assert(a is IList);
             dynamic h = new Dictionary<string,dynamic>();
-            
+
             for (int i = 0; i < a.Count; i++){
                 if (a[i].ContainsKey("field"))
                 {
@@ -122,10 +117,6 @@ class ConfigLoader
                 h.Add(a[i]["name"], a[i]);
             }
             parent[key] = h;
-            
-            // if ( key == "input") { tmp["input"] = h; }
-            // if ( key == "output") { tmp["output"] = h; }
-            // if ( key == "content") { tmp["content"] = h; }
         }
 
         if (a is IDictionary)
@@ -138,9 +129,7 @@ class ConfigLoader
                     h2a(a[subkey], subkey, fields, a);
                 }
             }
-            // if (a.ContainsKey("input")) { a["input"] = tmp["input"]; }
-            // if (a.ContainsKey("output")) { a["output"] = tmp["output"]; }
-            
+
         } else if (a is IList)
         {
             for(int i = 0; i < a.Count; i++)
@@ -148,11 +137,9 @@ class ConfigLoader
                 if (a[i] is ICollection)
                 {
                     h2a(a[i], Convert.ToString(i), fields, a);
-                    // if (a[i].ContainsKey("content")) { a[i]["content"] = tmp["content"]; }
                 }
             }
         }
         return a;
-    }        
-
+    }
 }
