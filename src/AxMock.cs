@@ -111,8 +111,9 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
             foreach (var m in Axapta.methods_config) {
                 if (m.Value["class"] == Name && m.Value.ContainsKey("output"))
                 {
-                    foreach (var i in m.Value["output"])
+                    foreach (var item in m.Value["output"])
                     {
+                        var i = item.Value;
                         if (i.ContainsKey("getter") && i["getter"] == method) {
                             if (i.ContainsKey("type"))
                             {

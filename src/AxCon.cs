@@ -372,10 +372,10 @@ public class AxCon
 
     private void set_values(AxaptaObject ax_class, dynamic params_config, dynamic prms)
     {
-        for (int i = 0; i < params_config.Count; i++)
+        foreach (var item in params_config)
         {
-            string param_name = params_config[i]["name"];
-            dynamic param_config = params_config[i];
+            string param_name = item.Key;
+            dynamic param_config = item.Value;
             if (Util.IsNullOrEmptySubitem(prms, param_name))
             {
                 if (!Util.IsNullOrEmptySubitem(param_config, "mandatory"))
@@ -521,10 +521,10 @@ public class AxCon
     {
         Dictionary<string,dynamic> result = new Dictionary<string,dynamic>();
         dynamic val = null;
-        for (int i = 0; i < params_config.Count; i++)
+        foreach (var item in params_config)
         {
-            string param_name = params_config[i]["name"];
-            dynamic param_config = params_config[i];
+            string param_name = item.Key;
+            dynamic param_config = item.Value;
 
             string param_type = (!Util.IsNullOrEmptySubitem(param_config, "type"))
                 ? param_config["type"]

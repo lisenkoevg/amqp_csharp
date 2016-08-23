@@ -95,7 +95,7 @@ class ConfigLoader
         // {"output", ""},
         // {"content", ""},
     // };
-    public static object h2a(dynamic a, string key, dynamic fields)
+    public static object h2a(dynamic a, string key, dynamic fields, dynamic parent = null)
     {
         if (( key == "input") || ( key == "output") || ( key == "content"))
         {
@@ -120,8 +120,9 @@ class ConfigLoader
                     continue;
                 }
                 h.Add(a[i]["name"], a[i]);
-                // a = h; //doesn't work (dynamic,by val,indexer?)
             }
+            parent[key] = h;
+            
             // if ( key == "input") { tmp["input"] = h; }
             // if ( key == "output") { tmp["output"] = h; }
             // if ( key == "content") { tmp["content"] = h; }
@@ -129,11 +130,12 @@ class ConfigLoader
 
         if (a is IDictionary)
         {
-            foreach(string subkey in a.Keys)
+            dynamic keys = new List<dynamic>(a.Keys);
+            foreach(string subkey in keys)
             {
                 if (a[subkey] is ICollection)
                 {
-                    h2a(a[subkey], subkey, fields);
+                    h2a(a[subkey], subkey, fields, a);
                 }
             }
             // if (a.ContainsKey("input")) { a["input"] = tmp["input"]; }
@@ -145,11 +147,12 @@ class ConfigLoader
             {
                 if (a[i] is ICollection)
                 {
-                    h2a(a[i], Convert.ToString(i), fields);
+                    h2a(a[i], Convert.ToString(i), fields, a);
                     // if (a[i].ContainsKey("content")) { a[i]["content"] = tmp["content"]; }
                 }
             }
         }
         return a;
     }        
+
 }
