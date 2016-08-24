@@ -435,15 +435,17 @@ public class AxCon
                         val = val.Replace(",", ".");
                         if (Single.TryParse(val, out fVal))
                         {
-                            ax_class_call(ax_class, param_config["setter"], fVal);
+                            val = fVal;
                         }
                     }
+                    ax_class_call(ax_class, param_config["setter"], val);
                     break;
                 case "integer":
                     if (val is string && Int32.TryParse(val, out iVal))
                     {
-                        ax_class_call(ax_class, param_config["setter"], iVal);
+                        val = iVal;
                     }
+                    ax_class_call(ax_class, param_config["setter"], val);
                     break;
                 case "boolean":
                     bool bVal;
@@ -451,13 +453,14 @@ public class AxCon
                     {
                         if (Boolean.TryParse(val, out bVal)) // "true" or "false"
                         {
-                            ax_class_call(ax_class, param_config["setter"], bVal);
+                            val = bVal ? 1 : 0;
                         }
                         else if (Int32.TryParse(val, out iVal))
                         {
-                            ax_class_call(ax_class, param_config["setter"], iVal != 0);
+                            val = iVal != 0;
                         }
                     }
+                    ax_class_call(ax_class, param_config["setter"], val);
                     break;
                 case "date":
                     if (val is string && DateTime.TryParse(val, out dt))
@@ -585,10 +588,11 @@ public class AxCon
                     {
                         var msg = string.Format("Type mismatch in config file: {0} is actually {1}", param_name, val.GetType().Name);
                         // dbg.fa(msg, "TypeMismatch");
-                        if (val is int)
+                        try
                         {
-                            val = (val != 0);
+                            val = ((int)val != 0);
                         }
+                        catch {}
                     }
                     break;
                 case "date":
