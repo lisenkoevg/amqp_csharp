@@ -247,6 +247,7 @@ public class AxCon
                     }
                     dynamic method_config = config["methods"][method];
                     AxaptaObject ax_class = this.ax_class(method_config["class"]);
+                    ax_class_call(ax_class, "clear");
                     set_values(ax_class, method_config["input"], prms);
                     ax_class_call(ax_class, "init");
                     if ((bool)ax_class_call(ax_class, "validate"))
@@ -403,146 +404,152 @@ public class AxCon
         {
             string param_name = item.Key;
             dynamic param_config = item.Value;
-            if (Util.IsNullOrEmptySubitem(prms, param_name))
+            if (Util.IsNullOrEmptySubitem(prms, param_name)
+                && !Util.IsNullOrEmptySubitem(param_config, "mandatory"))
             {
-                if (!Util.IsNullOrEmptySubitem(param_config, "mandatory"))
+                throw new AxWarning(string.Format("missing mandatory field: {0}", param_name));
+            }
+            
+            if (Util.GetSubitem(prms, param_name) == null)
+                continue;
+
+            dynamic val = prms[param_name];
+            int iVal = 0;
+            DateTime dt = new DateTime();
+            string param_type = (!Util.IsNullOrEmptySubitem(param_config, "type"))
+                ? param_config["type"]
+                : "default";
+            switch (param_type)
+            {
+            case "string":
+            case "default":
+                ax_class_call(ax_class, param_config["setter"], val);
+                break;
+            case "real":
+                float fVal;
+                if (val is string)
                 {
-                    throw new AxWarning(string.Format("missing mandatory field: {0}", param_name));
+                    val = val.Replace(",", ".");
+                    if (Single.TryParse(val, out fVal))
+                    {
+                        val = fVal;
+                    }
+                }
+                ax_class_call(ax_class, param_config["setter"], val);
+                break;
+            case "integer":
+                if (val is string && Int32.TryParse(val, out iVal))
+                {
+                    val = iVal;
+                }
+                ax_class_call(ax_class, param_config["setter"], val);
+                break;
+            case "boolean":
+                bool bVal;
+                if (val is string)
+                {
+                    if (Boolean.TryParse(val, out bVal)) // "true" or "false"
+                    {
+                        val = bVal;
+                    }
+                    else if (Int32.TryParse(val, out iVal))
+                    {
+                        val = iVal != 0;
+                    }
+                    else
+                    {
+                        val = val.ToUpper() != "N";
+                    }
                 }
                 else
                 {
-                    continue;
+                    try {
+                        val = (int)val != 0;
+                    }
+                    catch {}
                 }
-            }
-            else
-            {
-                dynamic val = prms[param_name];
-                int iVal = 0;
-                DateTime dt = new DateTime();
-                string param_type = (!Util.IsNullOrEmptySubitem(param_config, "type"))
-                    ? param_config["type"]
-                    : "default";
-                switch (param_type)
+                ax_class_call(ax_class, param_config["setter"], val);
+                break;
+            case "date":
+                if (val is string && DateTime.TryParse(val, out dt))
                 {
-                case "string":
-                case "default":
-                    ax_class_call(ax_class, param_config["setter"], val);
-                    break;
-                case "real":
-                    float fVal;
-                    if (val is string)
-                    {
-                        val = val.Replace(",", ".");
-                        if (Single.TryParse(val, out fVal))
-                        {
-                            val = fVal;
-                        }
-                    }
-                    ax_class_call(ax_class, param_config["setter"], val);
-                    break;
-                case "integer":
-                    if (val is string && Int32.TryParse(val, out iVal))
-                    {
-                        val = iVal;
-                    }
-                    ax_class_call(ax_class, param_config["setter"], val);
-                    break;
-                case "boolean":
-                    bool bVal;
-                    if (val is string)
-                    {
-                        if (Boolean.TryParse(val, out bVal)) // "true" or "false"
-                        {
-                            val = bVal ? 1 : 0;
-                        }
-                        else if (Int32.TryParse(val, out iVal))
-                        {
-                            val = iVal != 0;
-                        }
-                    }
-                    ax_class_call(ax_class, param_config["setter"], val);
-                    break;
-                case "date":
-                    if (val is string && DateTime.TryParse(val, out dt))
-                    {
-                        ax_class_call(ax_class, param_config["setter"], dt.ToString("dd.MM.yyyy"));
-                    }
-                    break;
-                case "datetime":
-                    if (val is string && DateTime.TryParse(val, out dt))
-                    {
-                        ax_class_call(ax_class, param_config["setter"], dt.ToString("dd.MM.yyyy HH:mm:ss"));
-                    }
-                    break;
-                case "array":
-                    if (!(val is IList))
-                    {
-                        throw new AxException(string.Format("{0} should be an array", param_name));
-                    }
-                    for (int j = 0; j < val.Count; j++)
-                    {
-                        set_values(ax_class, param_config["content"], val[j]);
-                        ax_class_call(ax_class, param_config["iterator"]);
-                    }
-                    break;
-                case "hash":
-                    if (!(val is IDictionary))
-                    {
-                        throw new AxException(string.Format("{0} should be an associative array", param_name));
-                    }
-                    if (param_config.ContainsKey("iterator"))
-                    {
-                        ax_class_call(ax_class, param_config["iterator"]);
-                    }
-                    set_values(ax_class, param_config["content"], val);
-                    break;
-                case "blob":
-                        string clientId = "";
-                        string file_id = "";
-                        if (val is string && val.Length == 65 && val.IndexOf('_') != -1)
-                        {
-                            var ar = val.Split('_');
-                            clientId = ar[0];
-                            file_id = ar[1];
-                        }
-                        else if (val is string && val.Length == 32)
-                        {
-                            clientId = this.clientId;
-                            file_id = val;
-                        }
-                        else
-                        {
-                            throw new AxException("invalid data_id");
-                        }
-
-                        if (clientId == "")
-                        {
-                            throw new AxException("empty clientId");
-                        }
-                        else if (clientId != this.clientId)
-                        {
-                            throw new AxException("invalid clientId");
-                        }
-                        if (!Regex.IsMatch(file_id, "^[0-9a-f]{32}$"))
-                        {
-                            throw new AxException("invalid file_id");
-                        }
-                        string tmpdir = "c:\\axcon\\axcon\\exchange\\"; // TODO to params2 !!!!!!!!
-                        string fname = tmpdir + clientId + '_' + file_id;
-                        if (!File.Exists(fname))
-                        {
-                            throw new AxException("file not found: " + fname);
-                        }
-                        ax_class_call(ax_class, param_config["setter"], fname);
-                    break;
-                default:
-                    if (val is string && !Util.IsNullOrEmpty(val))
-                    {
-                        val = value2enum(val, param_config["type"]);
-                        ax_class_call(ax_class, param_config["setter"], val);
-                    }
-                    break;
+                    ax_class_call(ax_class, param_config["setter"], dt.ToString("dd.MM.yyyy"));
                 }
+                break;
+            case "datetime":
+                if (val is string && DateTime.TryParse(val, out dt))
+                {
+                    ax_class_call(ax_class, param_config["setter"], dt.ToString("dd.MM.yyyy HH:mm:ss"));
+                }
+                break;
+            case "array":
+                if (!(val is IList))
+                {
+                    throw new AxException(string.Format("{0} should be an array", param_name));
+                }
+                for (int j = 0; j < val.Count; j++)
+                {
+                    set_values(ax_class, param_config["content"], val[j]);
+                    ax_class_call(ax_class, param_config["iterator"]);
+                }
+                break;
+            case "hash":
+                if (!(val is IDictionary))
+                {
+                    throw new AxException(string.Format("{0} should be an associative array", param_name));
+                }
+                if (param_config.ContainsKey("iterator"))
+                {
+                    ax_class_call(ax_class, param_config["iterator"]);
+                }
+                set_values(ax_class, param_config["content"], val);
+                break;
+            case "blob":
+                    string clientId = "";
+                    string file_id = "";
+                    if (val is string && val.Length == 65 && val.IndexOf('_') != -1)
+                    {
+                        var ar = val.Split('_');
+                        clientId = ar[0];
+                        file_id = ar[1];
+                    }
+                    else if (val is string && val.Length == 32)
+                    {
+                        clientId = this.clientId;
+                        file_id = val;
+                    }
+                    else
+                    {
+                        throw new AxException("invalid data_id");
+                    }
+
+                    if (clientId == "")
+                    {
+                        throw new AxException("empty clientId");
+                    }
+                    else if (clientId != this.clientId)
+                    {
+                        throw new AxException("invalid clientId");
+                    }
+                    if (!Regex.IsMatch(file_id, "^[0-9a-f]{32}$"))
+                    {
+                        throw new AxException("invalid file_id");
+                    }
+                    string tmpdir = "c:\\axcon\\axcon\\exchange\\"; // TODO to params2 !!!!!!!!
+                    string fname = tmpdir + clientId + '_' + file_id;
+                    if (!File.Exists(fname))
+                    {
+                        throw new AxException("file not found: " + fname);
+                    }
+                    ax_class_call(ax_class, param_config["setter"], fname);
+                break;
+            default:
+                if (val is string && !Util.IsNullOrEmpty(val))
+                {
+                    val = value2enum(val, param_config["type"]);
+                    ax_class_call(ax_class, param_config["setter"], val);
+                }
+                break;
             }
         }
     }
