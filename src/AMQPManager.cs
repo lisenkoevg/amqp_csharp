@@ -51,7 +51,6 @@ public class AMQPManager
     {
         ChDir();
         Directory.CreateDirectory(logDir);
-        Directory.CreateDirectory(logDir + "\\print");
 
         int count;
         AMQPManager am;
@@ -982,6 +981,7 @@ public class AMQPManager
     {
         if (dtNow.Second < 2 || (dtNow.Second > 29 && dtNow.Second < 32))
         {
+            Directory.CreateDirectory(logDir + "\\print");
             var file_name = dtNow.ToString("yyyyMMddHHmmss") + ".log";
             StreamWriter writer = null;
             try

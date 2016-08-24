@@ -60,7 +60,7 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
             if (method == "run")
             {
                 Thread.Sleep(100 * Axapta.rnd(1, 20));
-                if (Axapta.isThrowExceptions && Axapta.rnd(0, 8) == 0)
+                if (Axapta.isThrowExceptions && Axapta.rnd(0, 20) == 0)
                 {
                     throw new Exception("Call exception");
                 }
