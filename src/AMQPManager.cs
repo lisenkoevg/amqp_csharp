@@ -18,9 +18,9 @@ public class AMQPManager
     private int axconInitTimeout = 30000;
     private int axconRequestTimeout = 60000;
     private int workersCheckPeriod = 30000;
+    private bool axconUseClassPool = true;
     private int startupWorkersCount;
     private readonly Process cur_proc = Process.GetCurrentProcess();
-    private readonly Dictionary<string,dynamic> config = ConfigLoader.Load("./config");
     private readonly DateTime startTime = DateTime.Now;
     private readonly bool isConsoleAvailable;
     private Dictionary<int, AMQP> amqpDic = new Dictionary<int, AMQP>();
@@ -37,6 +37,7 @@ public class AMQPManager
     private bool isWorkersRestarting = false;
     private bool exitScheduled = false;
     private string userInput = "";
+    private string infoMsg = "";
     private int updateScreenPeriod = 500;
     private int inputPollPeriod = 100;
     private DateTime nextWorkersCheck = default(DateTime);
@@ -50,6 +51,7 @@ public class AMQPManager
     {
         ChDir();
         Directory.CreateDirectory(logDir);
+        Directory.CreateDirectory(logDir + "\\print");
 
         int count;
         AMQPManager am;
@@ -111,6 +113,10 @@ public class AMQPManager
         {
             axconRequestTimeout = parsedValue;
         }
+        if (conf.ContainsKey("axconUseClassPool") && Int32.TryParse(conf["axconUseClassPool"], out parsedValue))
+        {
+            axconUseClassPool = parsedValue != 0;
+        }
     }
 
     private void Work(object count)
@@ -163,7 +169,8 @@ public class AMQPManager
         {
             int workerId = GetWorkerId();
             var amqp = new AMQP(workerId);
-            var axcon = new AxCon(config, workerId);
+            var axcon = new AxCon(workerId);
+            axcon.useClassPool = axconUseClassPool;
             amqpDic.Add(workerId, amqp);
             axconDic.Add(workerId, axcon);
             workersCount++;
@@ -637,6 +644,10 @@ public class AMQPManager
                     {
                         ExecuteCommand(keyStr);
                     }
+                    else
+                    {
+                        userInput += keyChar;
+                    }
                     break;
                 case "Spacebar":
                     ToggleOutputPaused();
@@ -667,7 +678,7 @@ public class AMQPManager
                     if (Regex.IsMatch(keyChar, "[0-9a-zA-Z]"))
                     {
                         userInput += keyChar;
-                        if (Regex.IsMatch(userInput.ToUpper(), @"\d*D|\d*P"))
+                        if (Regex.IsMatch(userInput.ToUpper(), @"\d*D|\d*P|RC"))
                         {
                             ExecuteCommand(userInput);
                             userInput = "";
@@ -681,7 +692,7 @@ public class AMQPManager
     private void ExecuteCommand(string cmd)
     {
         cmd = cmd.ToUpper();
-        if (Regex.IsMatch(cmd, @"A|\d*D|\d*P|R|Q|F"))
+        if (Regex.IsMatch(cmd, @"A|\d*D|\d*P|R|Q|F|RC"))
         {
             inputPaused = true;
             switch (cmd)
@@ -695,8 +706,6 @@ public class AMQPManager
                 case "R":
                     RestartRunningWorkers();
                     checkWorkersTimer.Change(1000, workersCheckPeriod);
-                    checkWorkersTimer.Change(5000, workersCheckPeriod);
-                    checkWorkersTimer.Change(10000, workersCheckPeriod);
                     break;
                 case "F":
                     checkWorkersTimer.Change(0, workersCheckPeriod);
@@ -711,6 +720,9 @@ public class AMQPManager
                         workersCheckPeriod = 5000;
                         checkWorkersTimer.Change(0, workersCheckPeriod);
                     }
+                    break;
+                case "RC":
+                    infoMsg = AxCon.LoadConfig();
                     break;
                 default:
                     if (Regex.IsMatch(cmd, @"\d+D"))
@@ -857,13 +869,16 @@ public class AMQPManager
             AMQP.msgInQueue
         ));
         output.AppendLine(string.Format(
-            "Config: workersCheckPeriod={0}s !amqpInitTimeout={1}s !axInitTimeout={2}s !axRequestTimeout={3}s startupWorkersCount={4}",
+            "Config: workersCheckPeriod={0}s !amqpInitTimeout={1}s !axInitTimeout={2}s !axRequestTimeout={3}s startupWorkersCount={4} useClassPool={5}\n YAMLtimestamp={6}",
             workersCheckPeriod / 1000.0,
             amqpInitTimeout / 1000.0,
             axconInitTimeout / 1000.0,
             axconRequestTimeout / 1000.0,
-            startupWorkersCount
+            startupWorkersCount,
+            axconUseClassPool ? "yes" : "no",
+            AxCon.config["lastModified"].ToString("MM-dd HH:mm:ss")
         ));
+        PrintToLog(output.ToString(), dtNow);
         output.AppendLine(string.Format(
             "Screen update period: {0}s running: {1:d\\.hh\\:mm\\:ss} heap={2:0.0}MB", //private={3:0.0}MB threads={4}
             System.Math.Round(updateScreenPeriod / 1000.0, 1),
@@ -876,10 +891,15 @@ public class AMQPManager
         output.AppendLine("?: Ctrl-r: restart all workers, Ctrl-q: stop all workers and exit");
         output.AppendLine("?: <id>p: pause/resume worker by <id>, Ctrl-p: pause/resume all workers");
         output.AppendLine(string.Format(
-            "?: f: force workers check {0}",
+            "?: f: force workers check {0}, rc: reload config *.yaml",
             nextWorkersCheck != default(DateTime) ? "(" + (nextWorkersCheck - dtNow).TotalSeconds.ToString("0") + ")": ""
         ));
         output.AppendLine("Space: pause screen update, Ctrl-C: force exit");
+        if (infoMsg != "")
+        {
+            output.AppendLine(string.Format("{0}", "".PadLeft(head.Length, '=')));
+            output.AppendLine(infoMsg);
+        }
         if (Monitor.TryEnter(lockOn, 200))
         {
             try
@@ -887,6 +907,10 @@ public class AMQPManager
                 Console.Clear();
                 Console.Write(output.ToString());
                 Console.Write("{0}", userInput);
+            }
+            catch (Exception e)
+            {
+                dbg.fa(e);
             }
             finally
             {
@@ -954,6 +978,24 @@ public class AMQPManager
         return result;
     }
 
+    private void PrintToLog(string s, DateTime dtNow)
+    {
+        if (dtNow.Second < 2 || (dtNow.Second > 29 && dtNow.Second < 32))
+        {
+            var file_name = dtNow.ToString("yyyyMMddHHmmss") + ".log";
+            StreamWriter writer = null;
+            try
+            {
+                writer = new StreamWriter(logDir + "\\print\\" + file_name, false);
+                writer.WriteLine(s);
+            }
+            finally
+            {
+                writer.Dispose();
+            }
+        }
+    }
+    
     private bool IsConsoleAvailable()
     {
         try

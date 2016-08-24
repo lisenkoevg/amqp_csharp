@@ -32,7 +32,6 @@ public class AxCon
     private State state = State.Init;
     private RequestState requestState = RequestState.NotApplicable;
     private Axapta ax;
-    private Dictionary<string,dynamic> config;
     private Dictionary<string,AxaptaObject> axClassPool;
     private string clientId;
     public readonly int workerId;
@@ -42,22 +41,50 @@ public class AxCon
     public TimeSpan longestMethodDuration = new TimeSpan();
     public string lastMethod = "";
     public string longestMethod = "";
-
+    public bool useClassPool = true;
+    public static Dictionary<string,dynamic> config;
     private object lockOn = new object();
 
-    public AxCon(Dictionary<string,dynamic> config, int workerId)
+    public AxCon(int workerId)
     {
-        this.config = config;
         this.workerId = workerId;
         ax = new Axapta();
-        axClassPool = new Dictionary<string,AxaptaObject>();
         #if AxMock
         ax = new Axapta(config["methods"], isThrowExceptions: true);
         #endif
     }
-
+    
+    static AxCon()
+    {
+        LoadConfig();
+    }
+    
+    public static string LoadConfig()
+    {
+        string result = "";
+        try
+        {
+            var tmp = ConfigLoader.Load("./config");
+            config = tmp;
+        }
+        catch (Exception e)
+        {
+            result = e.Message;
+        }
+        finally
+        {
+            if (config == null)
+            {
+                Console.WriteLine(result);
+                Environment.Exit(1);
+            }
+        }
+        return result;
+    }
+    
     public void Init()
     {
+        axClassPool = new Dictionary<string,AxaptaObject>();
         InitOrFinAction(Logon, State.Login, State.Ready, RequestState.WaitReq, State.InitError);
     }
 
@@ -111,7 +138,7 @@ public class AxCon
             // msg
         // ));
     }
-
+    
     public bool GetAsyncInitTimedOut()
     {
         lock (lockOn) return asyncInitTimedOut;
@@ -302,11 +329,11 @@ public class AxCon
         };
     }
 
-    private object ax_class(string ax_class_name)
+    private AxaptaObject ax_class(string ax_class_name)
     {
-        if (!axClassPool.ContainsKey(ax_class_name))
+        if (!axClassPool.ContainsKey(ax_class_name) || !useClassPool)
         {
-            axClassPool.Add(ax_class_name, ax.CreateAxaptaObject(ax_class_name));
+            axClassPool[ax_class_name] = ax.CreateAxaptaObject(ax_class_name);
         }
         return axClassPool[ax_class_name];
     }

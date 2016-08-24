@@ -9,14 +9,14 @@ class TestSend
 {
     public static void Main(string[] args)
     {
-        dynamic config = ConfigLoader.Load("./config");
+        Dictionary<string,dynamic> settings = ConfigLoader.LoadFile("./config/settings.yaml");
         
         ConnectionFactory factory = new ConnectionFactory() {
-            HostName = config["settings"]["amqp"]["host"],
-            Port = Convert.ToInt32(config["settings"]["amqp"]["port"]),
-            UserName = config["settings"]["amqp"]["user"],
-            Password = config["settings"]["amqp"]["password"],
-            VirtualHost = config["settings"]["amqp"]["vhost"]
+            HostName = settings["amqp"]["host"],
+            Port = Convert.ToInt32(settings["amqp"]["port"]),
+            UserName = settings["amqp"]["user"],
+            Password = settings["amqp"]["password"],
+            VirtualHost = settings["amqp"]["vhost"]
         };
         
         using (var con = factory.CreateConnection())

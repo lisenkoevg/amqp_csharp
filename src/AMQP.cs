@@ -204,15 +204,15 @@ public class AMQP
         try
         {
             msgInQueue = channel.MessageCount(queue);
-            string message = Encoding.UTF8.GetString(ea.Body);
+            string message = (ea.Body != null && ea.Body.Length != 0) ? Encoding.UTF8.GetString(ea.Body) : "{}";
             IBasicProperties props = ea.BasicProperties;
             string ReplyTo = props.IsReplyToPresent() ? props.ReplyTo : "";
             string CorrelationId = props.IsCorrelationIdPresent() ? props.CorrelationId : "";
             IDictionary<string,dynamic> headers = props.IsHeadersPresent()
                 ? props.Headers : new Dictionary<string,object>();
-            method = headers.ContainsKey("method")
+            method = headers.ContainsKey("method") && headers["method"] != null
                 ? Encoding.UTF8.GetString(headers["method"]) : "";
-            string rpc_id = headers.ContainsKey("rpc_id")
+            string rpc_id = headers.ContainsKey("rpc_id") && headers["rpc_id"] != null
                 ? Encoding.UTF8.GetString(headers["rpc_id"]) : "";
 
             State state = GetState();

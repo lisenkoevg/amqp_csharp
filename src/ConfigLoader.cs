@@ -35,18 +35,26 @@ class ConfigLoader
 {
     public static Dictionary<string,object> Load(string path)
     {
+        DateTime lastModified;
+        
         Dictionary<string,dynamic> result = new Dictionary<string,object>()
         {
-            {"settings", LoadFile(path + "/settings.yaml")},
             {"enums",  LoadFile(path + "/enums.yaml")},
             {"methods", new Dictionary<string,object>()}
         };
+        lastModified = File.GetLastWriteTime(path + "/enums.yaml");
         dynamic fields =  LoadFile(path + "/fields.yaml");
-        dynamic common =  LoadFile(path + "/common.yaml");
+        lastModified = File.GetLastWriteTime(path + "/fields.yaml") > lastModified
+            ? File.GetLastWriteTime(path + "/fields.yaml")
+            : lastModified;
+        // dynamic common =  LoadFile(path + "/common.yaml");
         DirectoryInfo dir = new DirectoryInfo(path + "/methods/");
         FileInfo[] files = dir.GetFiles("*.yaml", SearchOption.TopDirectoryOnly);
         foreach (FileInfo f in files) {
             result["methods"][f.Name.Replace(f.Extension, "")] =  LoadFile(f.FullName);
+            lastModified = File.GetLastWriteTime(f.FullName) > lastModified
+                ? File.GetLastWriteTime(f.FullName)
+                : lastModified;
         }
 
         h2a(result["methods"], "methods", fields);
@@ -63,6 +71,7 @@ class ConfigLoader
             }
         }
         result["enums"] = legacy_enums;
+        result["lastModified"] = lastModified;
         return result;
     }
 
@@ -72,16 +81,18 @@ class ConfigLoader
 
         var deserializer = new Deserializer();
         dynamic yamlObject = new Object();
+        var sr = new StreamReader(path);
         try
         {
             // Dictionary<object,object>
-            yamlObject = deserializer.Deserialize(new StreamReader(path));
+            yamlObject = deserializer.Deserialize(sr);
         }
         catch (Exception e)
         {
-            Console.WriteLine("Exception while deserializing file {0}\n{1}", path, e.Message);
-            Environment.Exit(1);
+            sr.Dispose();
+            throw new Exception(string.Format("Exception while deserializing file {0}\n{1}", path, e.Message));
         }
+        sr.Dispose();
         var serializer = new Serializer(SerializationOptions.JsonCompatible);
         var str = new StringWriter();
         serializer.Serialize(str, yamlObject);
