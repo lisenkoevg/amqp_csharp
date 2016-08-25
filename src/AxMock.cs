@@ -60,9 +60,17 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
             if (method == "run")
             {
                 Thread.Sleep(100 * Axapta.rnd(1, 20));
-                if (Axapta.isThrowExceptions && Axapta.rnd(0, 20) == 0)
+                if (Axapta.isThrowExceptions && Axapta.rnd(0, 12) == 0)
                 {
-                    throw new Exception("Call exception");
+                    throw new Exception("Call run() exception");
+                }
+            }
+            if (method == "validate")
+            {
+                Thread.Sleep(100 * Axapta.rnd(1, 10));
+                if (Axapta.isThrowExceptions && Axapta.rnd(0, 12) == 0)
+                {
+                    throw new Exception("Call validate() exception");
                 }
             }
             dynamic result = "";

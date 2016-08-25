@@ -168,6 +168,8 @@ public class AMQPManager
         {
             int workerId = GetWorkerId();
             var amqp = new AMQP(workerId);
+            amqp.OnAxPrepareRequest += AxPrepareRequest;
+            amqp.OnAxExecuteRequest += AxExecuteRequest;
             var axcon = new AxCon(workerId);
             axcon.useClassPool = axconUseClassPool;
             amqpDic.Add(workerId, amqp);
@@ -318,7 +320,7 @@ public class AMQPManager
         {
             amqp.SetInitState();
         }
-        if (amqpState == AMQP.State.ForcePaused && (requestState == AxCon.RequestState.ReqErr || axconAsyncRequestTimedOut))
+        if (amqpState == AMQP.State.ForcePaused && (requestState == AxCon.RequestState.ReqErr || requestState == AxCon.RequestState.PrepErr || axconAsyncRequestTimedOut))
         {
             ScheduleFinWorkerAxCon(axcon);
             lock (lockOn)
@@ -328,7 +330,7 @@ public class AMQPManager
             }
         }
         if (amqpState == AMQP.State.ForcePaused && axconState == AxCon.State.Ready
-            && requestState != AxCon.RequestState.ReqErr && !axconAsyncRequestTimedOut)
+            && requestState != AxCon.RequestState.ReqErr && requestState != AxCon.RequestState.PrepErr && !axconAsyncRequestTimedOut)
         {
             amqp.ForceResume();
         }
@@ -367,7 +369,7 @@ public class AMQPManager
             asyncTaskChainTail = nextTask.ContinueWith(
                 (t) => {
                     amqp.SetAsyncInitTimedOut(false);
-                    Task task = Task.Factory.StartNew((Action)amqp.Init);
+                    Task task = Task.Factory.StartNew((Action)amqp.Init, TaskCreationOptions.LongRunning);
                     bool waitSuccess = task.Wait(amqpInitTimeout);
                     amqp.SetAsyncInitTimedOut(!waitSuccess);
                     task.Wait();
@@ -398,7 +400,7 @@ public class AMQPManager
             asyncTaskChainTail = nextTask.ContinueWith(
                 (t) => {
                     axcon.SetAsyncInitTimedOut(false);
-                    Task task = Task.Factory.StartNew(action);
+                    Task task = Task.Factory.StartNew(action, TaskCreationOptions.LongRunning);
                     bool waitSuccess = task.Wait(axconInitTimeout);
 
                     if (axcon.GetState() == stateBefore)
@@ -421,7 +423,6 @@ public class AMQPManager
 
     private void StartWorker(AMQP amqp)
     {
-        amqp.OnAxRequest += AxRequest;
         amqp.Start();
     }
 
@@ -441,18 +442,27 @@ public class AMQPManager
         return _workerId;
     }
 
-    private Dictionary<string,object> AxRequest(AMQP amqp, string method, Dictionary<string,object> prms, string id)
+    private AxCon.RequestState AxPrepareRequest(AMQP amqp, string method, Dictionary<string,object> prms, string id)
     {
         AxCon axcon = axconDic[amqp.workerId];
-
-        axcon.lastRequestStarttime = DateTime.Now;
         axcon.lastMethod = Util.RemoveVowels(method);
+        axcon.lastRequestStarttime = DateTime.Now;
+        axcon.SetAsyncRequestTimedOut(false);
+        var requestState = axcon.PrepareRequest(method, prms, id);
+        if (requestState == AxCon.RequestState.PrepErr)
+        {
+            amqp.ForcePause();
+        }
+        return requestState;
+    }
 
+    private Dictionary<string,object> AxExecuteRequest(AMQP amqp, string method, Dictionary<string,object> prms, string id)
+    {
+        AxCon axcon = axconDic[amqp.workerId];
         var response = new Dictionary<string,object>();
         axcon.SetAsyncRequestTimedOut(false);
-
         Stopwatch stopWatch = Stopwatch.StartNew();
-        response = axcon.request(method, prms, id);
+        response = axcon.ExecuteRequest();
         stopWatch.Stop();
         var requestState = axcon.GetRequestState();
 
@@ -468,11 +478,7 @@ public class AMQPManager
         if (waitSuccess)
         {
             // response = task.Result;
-            if (requestState == AxCon.RequestState.ReqErr)
-            {
-                amqp.ForcePause();
-            }
-            else
+            if (requestState != AxCon.RequestState.ReqErr)
             {
                 TimeSpan last_method_duration = stopWatch.Elapsed;
                 if (axcon.longestMethod == "" || last_method_duration > axcon.longestMethodDuration)
@@ -480,6 +486,10 @@ public class AMQPManager
                     axcon.longestMethod = axcon.lastMethod;
                     axcon.longestMethodDuration = last_method_duration;
                 }
+            }
+            else
+            {
+                amqp.ForcePause();
             }
         }
         else
@@ -811,7 +821,8 @@ public class AMQPManager
                 double current_req_duration = axInfo["lastRequestStarttime"] != default(DateTime)
                     ? System.Math.Round((dtNow - axInfo["lastRequestStarttime"]).TotalMilliseconds/1000, 1)
                     : 0;
-                string method = axconRequestState == AxCon.RequestState.Request ? axInfo["lastMethod"].Replace("cmpECommerce", "").Trim('_') : "";
+                string method = !(axconRequestState == AxCon.RequestState.NotApplicable || axconRequestState == AxCon.RequestState.WaitReq)
+                    ? axInfo["lastMethod"].Replace("cmpECommerce", "").Trim('_') : "";
                 string longestMethod = axInfo["longestMethod"].Replace("cmpECommerce", "").Trim('_');
                 longestMethod = longestMethod.Length <= 14 ? longestMethod : longestMethod.Substring(0, 14);
                 longestMethod += (axInfo["longestMethodDuration"] != default(TimeSpan)
@@ -832,7 +843,12 @@ public class AMQPManager
                     axconStateStr.Length <= 7 ? axconStateStr : axconStateStr.Substring(0, 7),
                     axconRequestStateStr.Length <= 8 ? axconRequestStateStr : axconRequestStateStr.Substring(0, 8),
                     axInfo["lastRequestStarttime"] != default(DateTime) ? axInfo["lastRequestStarttime"].ToString("HH:mm:ss") : "",
-                    axconRequestState == AxCon.RequestState.Request && current_req_duration > 0 ? current_req_duration.ToString("0.0") : "",
+                    !(axconRequestState == AxCon.RequestState.NotApplicable
+                        || axconRequestState == AxCon.RequestState.WaitReq
+                        || axconRequestState == AxCon.RequestState.ReqErr
+                        || axconRequestState == AxCon.RequestState.PrepErr
+                        )
+                        && current_req_duration > 0 ? current_req_duration.ToString("0.0") : "",
                     method.Length <= 14 ? method : method.Substring(0, 14),
                     longestMethod
                     
@@ -979,7 +995,7 @@ public class AMQPManager
 
     private void PrintToLog(string s, DateTime dtNow)
     {
-        if (dtNow.Second < 2 || (dtNow.Second > 29 && dtNow.Second < 32))
+        if (dtNow.Second % 10 == 0)
         {
             Directory.CreateDirectory(logDir + "\\print");
             var file_name = dtNow.ToString("yyyyMMddHHmmss") + ".log";

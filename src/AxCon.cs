@@ -24,7 +24,7 @@ class AxException : Exception
 public class AxCon
 {
     public enum State {Init, Login, Ready, Logoff, InitError, FinError};
-    public enum RequestState {NotApplicable, WaitReq, Request, ReqErr};
+    public enum RequestState {NotApplicable, WaitReq, Prepare, PrepOk, PrepWarn, PrepErr, Request, ReqErr};
     private int msgCount = 0;
     private int errorCount = 0;
     private int requestErrorCount = 0;
@@ -43,6 +43,12 @@ public class AxCon
     public string longestMethod = "";
     public bool useClassPool = true;
     public static Dictionary<string,dynamic> config;
+    private Dictionary<string, object> request;
+    private Dictionary<string, object> response;
+    private AxaptaObject axClass;
+    private dynamic methodConfig;
+    private static readonly Dictionary<string,object> errorMsg =
+        new Dictionary<string,object>(){{"code", -32000}, {"message", "Server error"}};
     private object lockOn = new object();
 
     public AxCon(int workerId)
@@ -203,118 +209,172 @@ public class AxCon
         ax.Logoff();
     }
 
-    public Dictionary<string,object> request(string method, Dictionary<string,dynamic> prms, string id)
+    public RequestState PrepareRequest(string method, Dictionary<string,dynamic> prms, string id)
     {
+        SetRequestState(RequestState.Prepare);
+        bool aReqTimedOut = false;
+        string logFileSuffix;
         clientId = null;
-
-        Dictionary<string, dynamic> request = new Dictionary<string, object>() {
+        request = new Dictionary<string, object>() {
             {"method", method},
             {"params", prms},
             {"id", id}
         };
-
         log(request, "request", true);
         log(request, "", true, true);
-
-        Dictionary<string, dynamic> response = new Dictionary<string, object>() {
+        response = new Dictionary<string, object>() {
             {"result", null},
             {"error", null},
             {"id", id},
             {"elapsed", 0}
         };
-        bool aReqTimedOut = false;
-        string fileSuffix;
-        switch (method)
+        if (method == "describe_methods")
         {
-            case "describe_methods":
-                response["result"] = new Dictionary<string,object>() {
-                    {"enums", config["enums"]},
-                    {"methods", config["methods"]}
-                };
-                break;
-            default:
-                SetRequestState(RequestState.Request);
-                try
+            SetRequestState(RequestState.PrepOk);
+            return GetRequestState();
+        }
+        try
+        {
+            if (!config["methods"].ContainsKey(method))
+            {
+                throw new AxException(string.Format("unknown method: [{0}]", method));
+            }
+            clientId = !Util.IsNullOrEmptySubitem(prms, "user_hash") ? Util.md5(prms["user_hash"]) : "";
+            methodConfig = config["methods"][method];
+            axClass = GetAxClass(methodConfig["class"]);
+            ax_class_call(axClass, "clear");
+            set_values(axClass, methodConfig["input"], prms);
+            ax_class_call(axClass, "init");
+            bool validateSuccess = (bool)ax_class_call(axClass, "validate");
+            aReqTimedOut = GetAsyncRequestTimedOut();
+            if (!aReqTimedOut)
+            {                
+                if (validateSuccess)
                 {
-                    if (!config["methods"].ContainsKey(method))
-                    {
-                        throw new AxException(string.Format("unknown method: [{0}]", method));
-                    }
-
-                    if (!Util.IsNullOrEmptySubitem(prms, "user_hash"))
-                    {
-                        clientId = Util.md5(prms["user_hash"]);
-                    }
-                    else
-                    {
-                        clientId = "";
-                    }
-                    dynamic method_config = config["methods"][method];
-                    AxaptaObject ax_class = this.ax_class(method_config["class"]);
-                    ax_class_call(ax_class, "clear");
-                    set_values(ax_class, method_config["input"], prms);
-                    ax_class_call(ax_class, "init");
-                    if ((bool)ax_class_call(ax_class, "validate"))
-                    {
-                        ax_class_call(ax_class, "run");
-                        if (method_config.ContainsKey("output"))
-                        {
-                            response["result"] = get_values(ax_class, method_config["output"]);
-                        }
-                    }
-                    int error_type = (int)ax_class_call(ax_class, "getErrorType");
+                    SetRequestState(RequestState.PrepOk);
+                }
+                else
+                {
+                    int error_type = (int)ax_class_call(axClass, "getErrorType");
                     if (error_type != 0)
                     {
                         response["error"] = new Dictionary<string,object>(){
                             {"type", error_type},
-                            {"message", ax_class_call(ax_class, "getErrorDescription")}
+                            {"message", ax_class_call(axClass, "getErrorDescription")}
                         };
                         response["result"] = null;
                     }
-                    aReqTimedOut = GetAsyncRequestTimedOut();
-                    if (!aReqTimedOut)
-                    {
-                        SetRequestState(RequestState.WaitReq);
-                    }
+                    SetRequestState(RequestState.PrepWarn);
                 }
-                catch (AxWarning e)
-                {
-                    aReqTimedOut = GetAsyncRequestTimedOut();
-                    fileSuffix = !aReqTimedOut ? "error" : "error_timedout_skipped";
-                    log(e, fileSuffix, true);
-                    if (!aReqTimedOut)
-                    {
-                        SetRequestState(RequestState.WaitReq);
-                        response["error"] = new Dictionary<string,string>(){{"message", e.Message}};
-                        response["result"] = null;
-                    }
-                }
-                catch (AxException e)
-                {
-                    aReqTimedOut = GetAsyncRequestTimedOut();
-                    fileSuffix = !aReqTimedOut ? "request_error" : "error_timedout_skipped";
-                    log(e, fileSuffix, true);
-                    if (!aReqTimedOut)
-                    {
-                        SetRequestState(RequestState.WaitReq);
-                        response["error"] = new Dictionary<string,string>(){{"message", e.Message}};
-                        response["result"] = null;
-                    }
-                }
-                catch (Exception e)
-                {
-                    aReqTimedOut = GetAsyncRequestTimedOut();
-                    fileSuffix = !aReqTimedOut ? "request_fatal" : "request_fatal_timedout_skipped";
-                    log(e, fileSuffix, false);
-                    if (!aReqTimedOut)
-                    {
-                        SetRequestState(RequestState.ReqErr);
-                        requestErrorCount++;
-                        response["error"] = new Dictionary<string,string>(){{"message", "fatal error"}};
-                        response["result"] = null;
-                    }
-                }
-                break;
+            }
+        }
+        catch (AxWarning e)
+        {
+            aReqTimedOut = GetAsyncRequestTimedOut();
+            logFileSuffix = !aReqTimedOut ? "prepare_axWarning" : "prepare_axWarning_timedout_skipped";
+            log(e, logFileSuffix, false);
+            if (!aReqTimedOut)
+            {
+                SetRequestState(RequestState.PrepWarn);
+                response["error"] = new Dictionary<string,string>(){{"message", e.Message}};
+                response["result"] = null;
+            }
+        }
+        catch (AxException e)
+        {
+            aReqTimedOut = GetAsyncRequestTimedOut();
+            logFileSuffix = !aReqTimedOut ? "prepare_axException" : "prepare_axException_timedout_skipped";
+            log(e, logFileSuffix, false);
+            if (!aReqTimedOut)
+            {
+                SetRequestState(RequestState.PrepWarn);
+                response["error"] = new Dictionary<string,string>(){{"message", e.Message}};
+                response["result"] = null;
+            }
+        }
+        catch (Exception e)
+        {
+            aReqTimedOut = GetAsyncRequestTimedOut();
+            logFileSuffix = !aReqTimedOut ? "prepare_exception" : "prepare_exception_timedout_skipped";
+            log(e, logFileSuffix, false);
+            if (!aReqTimedOut)
+            {
+                SetRequestState(RequestState.PrepErr);
+                requestErrorCount++;
+                response["error"] = errorMsg;
+                response["result"] = null;
+            }
+        }
+        return GetRequestState();
+    }
+
+    public Dictionary<string,object> ExecuteRequest()
+    {
+        if (GetRequestState() == RequestState.PrepWarn)
+        {
+            SetRequestState(RequestState.WaitReq);
+            msgCount++;
+            return response;            
+        }
+        SetRequestState(RequestState.Request);
+        bool aReqTimedOut = false;
+        string logFileSuffix;
+        if ((string)request["method"] == "describe_methods")
+        {
+            response["result"] = new Dictionary<string,object>() {
+                {"enums", config["enums"]},
+                {"methods", config["methods"]}
+            };
+            SetRequestState(RequestState.WaitReq);
+            msgCount++;
+            return response;
+        }
+        try
+        {
+            ax_class_call(axClass, "run");
+            if (methodConfig.ContainsKey("output"))
+            {
+                response["result"] = get_values(axClass, methodConfig["output"]);
+            }
+            int error_type = (int)ax_class_call(axClass, "getErrorType");
+            if (error_type != 0)
+            {
+                response["error"] = new Dictionary<string,object>(){
+                    {"type", error_type},
+                    {"message", ax_class_call(axClass, "getErrorDescription")}
+                };
+                response["result"] = null;
+            }
+            aReqTimedOut = GetAsyncRequestTimedOut();
+            if (!aReqTimedOut)
+            {
+                SetRequestState(RequestState.WaitReq);
+            }
+        }
+        catch (AxException e)
+        {
+            aReqTimedOut = GetAsyncRequestTimedOut();
+            logFileSuffix = !aReqTimedOut ? "request_axException" : "request_axException_timedout_skipped";
+            log(e, logFileSuffix, true);
+            if (!aReqTimedOut)
+            {
+                SetRequestState(RequestState.WaitReq);
+                response["error"] = new Dictionary<string,string>(){{"message", e.Message}};
+                response["result"] = null;
+            }
+        }
+        catch (Exception e)
+        {
+            aReqTimedOut = GetAsyncRequestTimedOut();
+            logFileSuffix = !aReqTimedOut ? "request_exception" : "request_exception_timedout_skipped";
+            log(e, logFileSuffix, false);
+            if (!aReqTimedOut)
+            {
+                SetRequestState(RequestState.ReqErr);
+                requestErrorCount++;
+                response["error"] = errorMsg;
+                response["result"] = null;
+            }
         }
         msgCount++;
         return response;
@@ -334,7 +394,7 @@ public class AxCon
         };
     }
 
-    private AxaptaObject ax_class(string ax_class_name)
+    private AxaptaObject GetAxClass(string ax_class_name)
     {
         if (!axClassPool.ContainsKey(ax_class_name) || !useClassPool)
         {
@@ -700,7 +760,6 @@ public class AxCon
         string basename = this.GetType().Name;
         string file_name = basename + (includeWorkerIdToFileName ? workerId.ToString() : "") + fileSuffix + ".log";
         string dir = AMQPManager.logDir + "\\" + dtNow.ToString("yyyyMMdd") + "\\" + (includeWorkerIdToFileName ? "byWorkerId" : "");
-        //TODO move directory creation to another place
         Directory.CreateDirectory(dir);
         
         if (!includeWorkerIdToFileName)

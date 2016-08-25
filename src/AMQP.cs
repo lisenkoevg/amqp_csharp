@@ -17,8 +17,10 @@ public class AMQP
     public DateTime startTime = DateTime.Now;
     public int errorCount = 0;
     public int msgCount = 0;
-    public delegate Dictionary<string,object> AxRequestHandler(AMQP amqp, string method, Dictionary<string,dynamic> prms, string id);
-    public event AxRequestHandler OnAxRequest;
+    public delegate AxCon.RequestState AxPrepareRequestHandler(AMQP amqp, string method, Dictionary<string,dynamic> prms, string id);
+    public delegate Dictionary<string,object> AxExecuteRequestHandler(AMQP amqp, string method, Dictionary<string,dynamic> prms, string id);
+    public event AxPrepareRequestHandler OnAxPrepareRequest;
+    public event AxExecuteRequestHandler OnAxExecuteRequest;
     public static uint msgInQueue;
     private bool asyncInitTimedOut = false;
     private static readonly Dictionary<string,dynamic> settings = ConfigLoader.LoadFile("./config/settings.yaml");
@@ -218,23 +220,33 @@ public class AMQP
             State state = GetState();
             if (state != State.Paused && state != State.ForcePaused && state == State.Running)
             {
-                dynamic request = JSON.Parse(message);
-                channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
                 isProcessing = true;
-                Dictionary<string,dynamic> responseObj = OnAxRequest(this, method, request, rpc_id);
-                string response = JSON.ToJSON(responseObj);
-                if (ReplyTo != "" && CorrelationId != "")
+                dynamic request = JSON.Parse(message);
+                Dictionary<string,object> responseObj = new Dictionary<string,object>();
+                
+                AxCon.RequestState axRequestState = OnAxPrepareRequest(this, method, request, rpc_id);
+                if (axRequestState == AxCon.RequestState.PrepOk || axRequestState == AxCon.RequestState.PrepWarn)
                 {
-                    props = channel.CreateBasicProperties();
-                    props.CorrelationId = CorrelationId;
-                    channel.BasicPublish(
-                        exchange: "",
-                        routingKey: ReplyTo,
-                        basicProperties: props,
-                        body: Encoding.UTF8.GetBytes(response)
-                    );
+                    channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                    responseObj = OnAxExecuteRequest(this, method, request, rpc_id);
+                    string response = JSON.ToJSON(responseObj);
+                    if (ReplyTo != "" && CorrelationId != "")
+                    {
+                        props = channel.CreateBasicProperties();
+                        props.CorrelationId = CorrelationId;
+                        channel.BasicPublish(
+                            exchange: "",
+                            routingKey: ReplyTo,
+                            basicProperties: props,
+                            body: Encoding.UTF8.GetBytes(response)
+                        );
+                    }
+                    msgCount++;
                 }
-                msgCount++;
+                else if (axRequestState == AxCon.RequestState.PrepErr)
+                {
+                    channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
+                }
             }
             else
             {
