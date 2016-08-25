@@ -122,6 +122,10 @@ public class AxCon
             msg = e.GetType().Name + " " + e.Message;
             if (!GetAsyncInitTimedOut())
             {
+                if (act.Method.Name == "Fin")
+                {
+                    ax = new Axapta();
+                }
                 SetState(stateIfError);
                 errorCount++;
             }
