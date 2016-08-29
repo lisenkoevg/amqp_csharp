@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Collections;
 using System.Collections.Generic;
 using RabbitMQ.Client;
@@ -202,7 +203,7 @@ public class AMQP
     {
         // EventingBasicConsumer consumer = (EventingBasicConsumer) model;
         // IModel channel = consumer.Model;
-        string method = "";
+        StringBuilder msg = new StringBuilder();
         try
         {
             msgInQueue = channel.MessageCount(queue);
@@ -212,23 +213,50 @@ public class AMQP
             string CorrelationId = props.IsCorrelationIdPresent() ? props.CorrelationId : "";
             IDictionary<string,dynamic> headers = props.IsHeadersPresent()
                 ? props.Headers : new Dictionary<string,object>();
-            method = headers.ContainsKey("method") && headers["method"] != null
+            string method = headers.ContainsKey("method") && headers["method"] != null
                 ? Encoding.UTF8.GetString(headers["method"]) : "";
             string rpc_id = headers.ContainsKey("rpc_id") && headers["rpc_id"] != null
                 ? Encoding.UTF8.GetString(headers["rpc_id"]) : "";
 
             State state = GetState();
+            msg.AppendFormat(
+                "st={0};method={1};rpc_id={2};ReplyTo={3};CorId={4};msg={5}",
+                state, method, rpc_id, ReplyTo, CorrelationId,
+                Regex.Replace(message, "(user_hash(?:[^0-9,a-f]{3,10})[0-9,a-f]{10})([0-9,a-f]{22})", "$1*", RegexOptions.IgnoreCase)
+            );
             if (state != State.Paused && state != State.ForcePaused && state == State.Running)
             {
                 isProcessing = true;
-                dynamic request = JSON.Parse(message);
                 Dictionary<string,object> responseObj = new Dictionary<string,object>();
-                
-                AxCon.RequestState axRequestState = OnAxPrepareRequest(this, method, request, rpc_id);
-                if (axRequestState == AxCon.RequestState.PrepOk || axRequestState == AxCon.RequestState.PrepWarn)
+                dynamic request = null;
+                AxCon.RequestState axRequestState = AxCon.RequestState.NotApplicable;
+                try
+                {
+                    request = JSON.Parse(message);
+                }
+                catch
+                {
+                    responseObj["result"] = null;
+                    responseObj["error"] = new Dictionary<string,object>(){
+                        {"code", -32600},
+                        {"message", "Invalid Request. The JSON sent is not a valid Request object"}
+                    };
+                    responseObj["elapsed"] = 0;
+                    msg.Insert(0, "invalid request;");
+                }
+                if (request != null)
+                {
+                    axRequestState = OnAxPrepareRequest(this, method, request, rpc_id);
+                    msg = msg.Insert(0, string.Format("reqSt={0};", axRequestState));
+                }
+                if (axRequestState == AxCon.RequestState.PrepOk || axRequestState == AxCon.RequestState.PrepWarn || request == null)
                 {
                     channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
-                    responseObj = OnAxExecuteRequest(this, method, request, rpc_id);
+                    msg.Insert(0, "ack;");
+                    if (request != null)
+                    {
+                        responseObj = OnAxExecuteRequest(this, method, request, rpc_id);
+                    }
                     string response = JSON.ToJSON(responseObj);
                     if (ReplyTo != "" && CorrelationId != "")
                     {
@@ -240,18 +268,20 @@ public class AMQP
                             basicProperties: props,
                             body: Encoding.UTF8.GetBytes(response)
                         );
+                        msg.Insert(0, "publish;");
                     }
                     msgCount++;
                 }
                 else if (axRequestState == AxCon.RequestState.PrepErr)
                 {
                     channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
+                    msg.Insert(0, "Nack;");
                 }
             }
             else
             {
-                dbg.fa("BasicNack workerId=" + workerId + " method=" + method + " state=" + state);
                 channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
+                msg.Insert(0, "Nack;");
             }
         }
         // catch (AlreadyClosedException e)
@@ -261,10 +291,12 @@ public class AMQP
             SetState(State.Error);
             log(e, "error");
             errorCount++;
+            msg.Insert(0, "st=State.Error;");
         }
         finally
         {
             isProcessing = false;
+            log(msg,"request");
         }
     }
 
@@ -394,7 +426,7 @@ public class AMQP
         {
             using (StreamWriter writer = new StreamWriter(dir + "\\" + file_name, true))
             {
-                writer.WriteLine("{0};{1};{2}", timestamp, workerId, obj.ToString());
+                writer.WriteLine("{0};{1,3};{2}", timestamp, workerId, obj.ToString());
             }
         }
     }

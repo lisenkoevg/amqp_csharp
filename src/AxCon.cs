@@ -50,7 +50,8 @@ public class AxCon
     private static readonly Dictionary<string,object> errorMsg =
         new Dictionary<string,object>(){{"code", -32000}, {"message", "Server error"}};
     private object lockOn = new object();
-
+    public Stopwatch stopwatch = new Stopwatch();
+    
     public AxCon(int workerId)
     {
         this.workerId = workerId;
@@ -271,8 +272,8 @@ public class AxCon
         catch (AxWarning e)
         {
             aReqTimedOut = GetAsyncRequestTimedOut();
-            logFileSuffix = !aReqTimedOut ? "prepare_axWarning" : "prepare_axWarning_timedout_skipped";
-            log(e, logFileSuffix, false);
+            logFileSuffix = !aReqTimedOut ? "prepare_axWarning" : "prepare_axWarning_timedOut_skipped";
+            log(e, logFileSuffix);
             if (!aReqTimedOut)
             {
                 SetRequestState(RequestState.PrepWarn);
@@ -283,8 +284,8 @@ public class AxCon
         catch (AxException e)
         {
             aReqTimedOut = GetAsyncRequestTimedOut();
-            logFileSuffix = !aReqTimedOut ? "prepare_axException" : "prepare_axException_timedout_skipped";
-            log(e, logFileSuffix, false);
+            logFileSuffix = !aReqTimedOut ? "prepare_axException" : "prepare_axException_timedOut_skipped";
+            log(e, logFileSuffix);
             if (!aReqTimedOut)
             {
                 SetRequestState(RequestState.PrepWarn);
@@ -295,8 +296,8 @@ public class AxCon
         catch (Exception e)
         {
             aReqTimedOut = GetAsyncRequestTimedOut();
-            logFileSuffix = !aReqTimedOut ? "prepare_exception" : "prepare_exception_timedout_skipped";
-            log(e, logFileSuffix, false);
+            logFileSuffix = !aReqTimedOut ? "prepare_exception" : "prepare_exception_timedOut_skipped";
+            log(e, logFileSuffix);
             if (!aReqTimedOut)
             {
                 SetRequestState(RequestState.PrepErr);
@@ -317,8 +318,6 @@ public class AxCon
             return response;            
         }
         SetRequestState(RequestState.Request);
-        bool aReqTimedOut = false;
-        string logFileSuffix;
         if ((string)request["method"] == "describe_methods")
         {
             response["result"] = new Dictionary<string,object>() {
@@ -329,6 +328,8 @@ public class AxCon
             msgCount++;
             return response;
         }
+        bool aReqTimedOut = false;
+        string logFileSuffix;
         try
         {
             ax_class_call(axClass, "run");
@@ -354,8 +355,8 @@ public class AxCon
         catch (AxException e)
         {
             aReqTimedOut = GetAsyncRequestTimedOut();
-            logFileSuffix = !aReqTimedOut ? "request_axException" : "request_axException_timedout_skipped";
-            log(e, logFileSuffix, true);
+            logFileSuffix = !aReqTimedOut ? "request_axException" : "request_axException_timedOut_skipped";
+            log(e, logFileSuffix);
             if (!aReqTimedOut)
             {
                 SetRequestState(RequestState.WaitReq);
@@ -366,8 +367,8 @@ public class AxCon
         catch (Exception e)
         {
             aReqTimedOut = GetAsyncRequestTimedOut();
-            logFileSuffix = !aReqTimedOut ? "request_exception" : "request_exception_timedout_skipped";
-            log(e, logFileSuffix, false);
+            logFileSuffix = !aReqTimedOut ? "request_exception" : "request_exception_timedOut_skipped";
+            log(e, logFileSuffix);
             if (!aReqTimedOut)
             {
                 SetRequestState(RequestState.ReqErr);
@@ -690,10 +691,17 @@ public class AxCon
                     break;
                 case "array":
                     val = new List<object>();
-                    while ((bool)ax_class_call(ax_class, param_config["iterator"]))
+                    bool isNext;
+                    do
                     {
-                        val.Add(get_values(ax_class, param_config["content"]));
+                        dynamic next = ax_class_call(ax_class, param_config["iterator"]);
+                        isNext = (next is bool && next) || ((next is int || next is long) && next != 0);
+                        if (isNext)
+                        {
+                            val.Add(get_values(ax_class, param_config["content"]));
+                        }
                     }
+                    while (isNext);
                     break;
                 case "hash":
                     val = get_values(ax_class, param_config["content"]);
@@ -760,6 +768,7 @@ public class AxCon
         string basename = this.GetType().Name;
         string file_name = basename + (includeWorkerIdToFileName ? workerId.ToString() : "") + fileSuffix + ".log";
         string dir = AMQPManager.logDir + "\\" + dtNow.ToString("yyyyMMdd") + "\\" + (includeWorkerIdToFileName ? "byWorkerId" : "");
+        dynamic dynObj = obj;
         Directory.CreateDirectory(dir);
         
         if (!includeWorkerIdToFileName)
@@ -778,7 +787,18 @@ public class AxCon
                 {
                     JSONParameters prms = new JSONParameters();
                     prms.UseEscapedUnicode = false;
-                    writer.WriteLine("{0};{1,3};{2}", timestamp, workerId, JSON.ToJSON(obj, prms));
+                    string msg = "";
+                    try
+                    {
+                        msg = JSON.ToJSON(obj, prms);
+                        msg = Regex.Replace(msg, "(user_hash(?:[^0-9,a-f]{3,10})[0-9,a-f]{10})([0-9,a-f]{22})", "$1*", RegexOptions.IgnoreCase);
+                    }
+                    catch (Exception e)
+                    {
+                        msg = e.ToString();
+                        try { msg += "\nerror['message']=" + dynObj["error"]["message"]; } catch {}
+                    }
+                    writer.WriteLine("{0};{1,3};{2}", timestamp, workerId, msg);
                 }
             }
         }
