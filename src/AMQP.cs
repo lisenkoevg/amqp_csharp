@@ -424,10 +424,14 @@ public class AMQP
         
         lock (lockOnSt)
         {
-            using (StreamWriter writer = new StreamWriter(dir + "\\" + file_name, true))
+            try
             {
-                writer.WriteLine("{0};{1,3};{2}", timestamp, workerId, obj.ToString());
+                using (StreamWriter writer = new StreamWriter(dir + "\\" + file_name, true))
+                {
+                    writer.WriteLine("{0};{1,3};{2}", timestamp, workerId, obj.ToString());
+                }
             }
+            catch {}
         }
     }
 }

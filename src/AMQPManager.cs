@@ -46,6 +46,7 @@ public class AMQPManager
     private Task asyncTaskChainTail = null;
     private object lockOn = new object();
     private StringBuilder output = new StringBuilder();
+    private string lastPrint = "";
     
     public static void Main(string[] args)
     {
@@ -995,20 +996,19 @@ public class AMQPManager
 
     private void PrintToLog(string s, DateTime dtNow)
     {
-        if (dtNow.Second % 10 == 0)
+        if (s != lastPrint && dtNow.Second % 2 == 0)
         {
-            Directory.CreateDirectory(logDir + "\\print");
-            var file_name = dtNow.ToString("yyyyMMddHHmmss") + ".log";
-            StreamWriter writer = null;
+            string fileName = dtNow.ToString("yyyyMMddHHmmss") + ".log";
             try
             {
-                writer = new StreamWriter(logDir + "\\print\\" + file_name, false);
-                writer.WriteLine(s);
+                Directory.CreateDirectory(logDir + "\\print");
+                using (StreamWriter writer = new StreamWriter(logDir + "\\print\\" + fileName, false))
+                {
+                    writer.WriteLine(s);
+                }
+                lastPrint = s;
             }
-            finally
-            {
-                writer.Dispose();
-            }
+            catch {}
         }
     }
     
