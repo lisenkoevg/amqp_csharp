@@ -255,7 +255,7 @@ public class AMQPManager
                 }
                 else
                 {
-                    if (amqpState == AMQP.State.Stopped)
+                    if (amqpState == AMQP.State.Stopped && axconState != AxCon.State.Logoff)
                     {
                         amqp.SetAsyncInitTimedOut(false);
                         axcon.SetAsyncInitTimedOut(false);
@@ -324,15 +324,16 @@ public class AMQPManager
         if (amqpState == AMQP.State.ForcePaused &&
             (requestState == AxCon.RequestState.ReqErr || requestState == AxCon.RequestState.PrepErr || axconAsyncRequestTimedOut))
         {
-            ScheduleFinWorkerAxCon(axcon);
-            lock (lockOn)
+            if (ScheduleFinWorkerAxCon(axcon))
             {
-                axcon.SetRequestState(AxCon.RequestState.NotApplicable);
-                axcon.SetAsyncRequestTimedOut(false);
+                lock (lockOn)
+                {
+                    axcon.SetRequestState(AxCon.RequestState.NotApplicable);
+                    axcon.SetAsyncRequestTimedOut(false);
+                }                
             }
         }
-        if (amqpState == AMQP.State.ForcePaused && axconState == AxCon.State.Ready
-            && requestState != AxCon.RequestState.ReqErr && requestState != AxCon.RequestState.PrepErr && !axconAsyncRequestTimedOut)
+        if (amqpState == AMQP.State.ForcePaused && axconState == AxCon.State.Ready && requestState == AxCon.RequestState.WaitReq)
         {
             amqp.ForceResume();
         }
@@ -389,12 +390,12 @@ public class AMQPManager
         ScheduleInitOrFinWorkerAxCon(axcon, axcon.Init, AxCon.State.Login);
     }
 
-    private void ScheduleFinWorkerAxCon(AxCon axcon)
+    private bool ScheduleFinWorkerAxCon(AxCon axcon)
     {
-        ScheduleInitOrFinWorkerAxCon(axcon, axcon.Fin, AxCon.State.Logoff);
+        return ScheduleInitOrFinWorkerAxCon(axcon, axcon.Fin, AxCon.State.Logoff);
     }
 
-    private void ScheduleInitOrFinWorkerAxCon(AxCon axcon, Action action, AxCon.State stateBefore)
+    private bool ScheduleInitOrFinWorkerAxCon(AxCon axcon, Action action, AxCon.State stateBefore)
     {
         if (!IsAsyncTaskChainRunning())
         {
@@ -422,6 +423,11 @@ public class AMQPManager
                     }
                 }
             );
+            return true;
+        }
+        else
+        {
+            return false;
         }
     }
 
@@ -462,7 +468,7 @@ public class AMQPManager
         return requestState;
     }
 
-    private Dictionary<string,object> AxExecuteRequest(AMQP amqp, string method, Dictionary<string,object> prms, string id)
+    private Dictionary<string,object> AxExecuteRequest(AMQP amqp, string id)
     {
         AxCon axcon = axconDic[amqp.workerId];
         var response = new Dictionary<string,object>();
@@ -726,7 +732,7 @@ public class AMQPManager
                     if (!exitScheduled)
                     {
                         exitScheduled = true;
-                        workersCheckPeriod = 5000;
+                        workersCheckPeriod = 3000;
                         checkWorkersTimer.Change(0, workersCheckPeriod);
                     }
                     break;
@@ -762,16 +768,12 @@ public class AMQPManager
 
     private void Print()
     {
-        if (!isConsoleAvailable)
-        {
-            return;
-        }
         if (!Monitor.TryEnter(lockOn, 100))
         {
             return;
         }
         output.Clear();
-        string tmpl = "{0,3} {1,-14} {2,6} {3,6} {4,3} {5,4} {6,7} {7,-10} {8,-7} {9,-8} {10,-8} {11,6} {12,-14} {13,-17} {0,3}";
+        string tmpl = "{0,3} {1,-14} {2,6} {3,6} {4,3} {5,4} {6,7} {7,-10} {8,-7} {9,-8} {10,-8} {11,4} {12,-14} {13,-17} {14,4} {0,3}";
         string head = string.Format(
             tmpl,
             "no",
@@ -785,9 +787,10 @@ public class AMQPManager
             "axState",
             "axReqSt",
             "reqStart",
-            "reqDur",
+            "dur",
             "request",
-            "longest"
+            "longest",
+            "pool"
         );
         output.AppendLine(head);
         output.AppendLine(string.Format("{0}", "".PadLeft(head.Length, '=')));
@@ -851,7 +854,8 @@ public class AMQPManager
                         )
                         && current_req_duration > 0 ? current_req_duration.ToString("0.0") : "",
                     method.Length <= 14 ? method : method.Substring(0, 14),
-                    longestMethod
+                    longestMethod,
+                    axInfo["poolCount"]
                     
                 ));
                 if (amqpState != AMQP.State.Running && amqpState != AMQP.State.Paused)
@@ -905,7 +909,7 @@ public class AMQPManager
         ));
         output.AppendLine("\n?: a: start new worker, d - stop one running worker, <id>d: stop worker by <id>");
         output.AppendLine("?: Ctrl-r: restart all workers, Ctrl-q: stop all workers and exit");
-        output.AppendLine("?: <id>p: pause/resume worker by <id>, Ctrl-p: pause/resume all workers");
+        output.AppendLine("?: <id>p: pause/resume worker by <id>, Ctrl-p: pause/resume all running workers");
         output.AppendLine(string.Format(
             "?: f: force workers check {0}, rc: reload methods config",
             nextWorkersCheck != default(DateTime) ? "(" + (nextWorkersCheck - dtNow).TotalSeconds.ToString("0") + ")": ""
@@ -916,21 +920,23 @@ public class AMQPManager
             output.AppendLine(string.Format("{0}", "".PadLeft(head.Length, '=')));
             output.AppendLine(infoMsg);
         }
-        if (Monitor.TryEnter(lockOn, 200))
+        if (isConsoleAvailable)
         {
-            try
+            if (Monitor.TryEnter(lockOn, 200))
             {
-                Console.Clear();
-                Console.Write(output.ToString());
-                Console.Write("{0}", userInput);
-            }
-            catch (Exception e)
-            {
-                dbg.fa(e);
-            }
-            finally
-            {
-                Monitor.Exit(lockOn);
+                try
+                {
+                    Console.Clear();
+                    Console.Write(output.ToString() + "\n" + userInput);
+                }
+                catch (Exception e)
+                {
+                    dbg.fa(e);
+                }
+                finally
+                {
+                    Monitor.Exit(lockOn);
+                }
             }
         }
     }

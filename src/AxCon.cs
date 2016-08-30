@@ -32,7 +32,7 @@ public class AxCon
     private State state = State.Init;
     private RequestState requestState = RequestState.NotApplicable;
     private Axapta ax;
-    private Dictionary<string,AxaptaObject> axClassPool;
+    private Dictionary<string,AxaptaObject> axClassPool = new Dictionary<string,AxaptaObject>();
     private string clientId;
     public readonly int workerId;
     private bool asyncInitTimedOut = false;
@@ -91,29 +91,18 @@ public class AxCon
     
     public void Init()
     {
-        axClassPool = new Dictionary<string,AxaptaObject>();
-        InitOrFinAction(Logon, State.Login, State.Ready, RequestState.WaitReq, State.InitError);
-    }
-
-    public void Fin()
-    {
-        InitOrFinAction(Logoff, State.Logoff, State.Init, RequestState.NotApplicable, State.FinError);
-    }
-
-    private void InitOrFinAction(Action act, State stateBefore, State stateAfter, RequestState requestStateAfter, State stateIfError)
-    {
-        // Stopwatch s = Stopwatch.StartNew();
+        Stopwatch s = Stopwatch.StartNew();
         string msg = "";
         try
         {
-            SetState(stateBefore);
-            act.Invoke();
+            SetState(State.Login);
+            Logon();
             lock (lockOn)
             {
                 if (!GetAsyncInitTimedOut())
                 {
-                    SetState(stateAfter);
-                    SetRequestState(requestStateAfter);
+                    SetState(State.Ready);
+                    SetRequestState(RequestState.WaitReq);
                 }
                 else
                 {
@@ -123,33 +112,75 @@ public class AxCon
         }
         // catch (ServerUnavailableException e)
         // catch (SessionTerminatedException e)
+        // catch (AlreadyLoggedOnException e)
         catch (Exception e)
         {
-            log(e, "error");
-            msg = e.GetType().Name + " " + e.Message;
             if (!GetAsyncInitTimedOut())
             {
-                if (act.Method.Name == "Fin")
-                {
-                    ax = new Axapta();
-                }
-                SetState(stateIfError);
+                SetState(State.InitError);
                 errorCount++;
             }
+            msg = e.GetType().Name + " " + e.Message;
         }
-        // s.Stop();
-        // dbg.fa(string.Format(
-            // "{0}.{1} {2} time={3}ms {4} asyncTimedOut={5} {6}",
-            // act.Target,
-            // act.Method,
-            // workerId,
-            // s.ElapsedMilliseconds.ToString("0"),
-            // GetState(),
-            // GetAsyncInitTimedOut(),
-            // msg
-        // ));
+        s.Stop();
+        log(string.Format(
+            "{0} time={1}ms {2} asyncTimedOut={3} {4}",
+            workerId,
+            s.ElapsedMilliseconds.ToString("0"),
+            GetState(),
+            GetAsyncInitTimedOut(),
+            msg
+        ), "init");
     }
-    
+
+    public void Fin()
+    {
+        Stopwatch s = Stopwatch.StartNew();
+        string msg = "";
+        try
+        {
+            SetState(State.Logoff);
+            Logoff();
+            lock (lockOn)
+            {
+                if (!GetAsyncInitTimedOut())
+                {
+                    SetState(State.Init);
+                    SetRequestState(RequestState.NotApplicable);
+                }
+                else
+                {
+                    errorCount++;
+                }
+            }
+        }
+        // catch (ServerUnavailableException e)
+        // catch (SessionTerminatedException e)
+        // catch (BusinessConnectorInstanceInvalid e)
+        catch (Exception e)
+        {
+            // axClassPool.Clear();
+            // ax = new Axapta();
+            if (!GetAsyncInitTimedOut())
+            {
+                SetState(State.FinError);
+                errorCount++;
+            }
+            msg = e.GetType().Name + " " + e.Message;
+        }
+        axClassPool.Clear();
+        ax = new Axapta();
+        s.Stop();
+        log(string.Format(
+            "{0} time={1}ms {2} asyncTimedOut={3} {4}",
+            workerId,
+            s.ElapsedMilliseconds.ToString("0"),
+            GetState(),
+            GetAsyncInitTimedOut(),
+            msg
+        ), "fin");
+    }
+
     public bool GetAsyncInitTimedOut()
     {
         lock (lockOn) return asyncInitTimedOut;
@@ -391,7 +422,8 @@ public class AxCon
             {"lastRequestStarttime", lastRequestStarttime},
             {"lastMethod", lastMethod},
             {"longestMethod", longestMethod},
-            {"longestMethodDuration", longestMethodDuration}
+            {"longestMethodDuration", longestMethodDuration},
+            {"poolCount", axClassPool.Count}
         };
     }
 
@@ -403,25 +435,53 @@ public class AxCon
         }
         return axClassPool[ax_class_name];
     }
-
+    
+    [System.Runtime.ExceptionServices.HandleProcessCorruptedStateExceptions]
+    [System.Security.SecurityCritical]
     private object ax_class_call(AxaptaObject ax_class, string method, params dynamic[] prms)
     {
-        object result;
-        switch (prms.Length)
+        object result = null;
+        try
         {
-            case 0:
-                result = ax_class.Call(method);
-                break;
-            case 1:
-                result = ax_class.Call(method, prms[0]);
-                break;
-            case 2:
-                result = ax_class.Call(method, prms[0], prms[1]);
-                break;
-            default:
-                throw new AxException("invalid axapta method call");
+            switch (prms.Length)
+            {
+                case 0:
+                    result = ax_class.Call(method);
+                    break;
+                case 1:
+                    result = ax_class.Call(method, prms[0]);
+                    break;
+                case 2:
+                    result = ax_class.Call(method, prms[0], prms[1]);
+                    break;
+                default:
+                    throw new AxException("invalid axapta method call");
+            }
         }
-
+        catch (AccessViolationException e)
+        {
+            log(string.Format(
+                "workerId={0} class={1} method={2} params={3} {4}",
+                workerId,
+                GetKeyByValue(ax_class, axClassPool),
+                method,
+                string.Join(",", prms),
+                e.GetType()
+            ), "call");
+            throw e;
+        }
+        catch (Exception e)
+        {
+            log(string.Format(
+                "workerId={0} class={1} method={2} params={3} {4}",
+                workerId,
+                GetKeyByValue(ax_class, axClassPool),
+                method,
+                string.Join(",", prms),
+                e.GetType()
+            ), "call");
+            throw e;
+        }
         return result;
     }
 
@@ -759,6 +819,20 @@ public class AxCon
         return result;
     }
 
+    private string GetKeyByValue(AxaptaObject val, Dictionary<string,AxaptaObject> dict)
+    {
+        string result = "";
+        foreach (var i in dict)
+        {
+            if (i.Value == val)
+            {
+                result = i.Key;
+                break;
+            }
+        }
+        return result;
+    }
+
     private static object lockOnSt = new object();
     public void log(object obj, string fileSuffix = "", bool toJSON = false, bool includeWorkerIdToFileName = false)
     {
@@ -791,7 +865,7 @@ public class AxCon
                     try
                     {
                         msg = JSON.ToJSON(obj, prms);
-                        msg = Regex.Replace(msg, "(user_hash(?:[^0-9,a-f]{3,10})[0-9,a-f]{10})([0-9,a-f]{22})", "$1*", RegexOptions.IgnoreCase);
+                        msg = Util.CutUserHash(msg);
                     }
                     catch (Exception e)
                     {

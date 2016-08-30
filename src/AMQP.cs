@@ -19,7 +19,7 @@ public class AMQP
     public int errorCount = 0;
     public int msgCount = 0;
     public delegate AxCon.RequestState AxPrepareRequestHandler(AMQP amqp, string method, Dictionary<string,dynamic> prms, string id);
-    public delegate Dictionary<string,object> AxExecuteRequestHandler(AMQP amqp, string method, Dictionary<string,dynamic> prms, string id);
+    public delegate Dictionary<string,object> AxExecuteRequestHandler(AMQP amqp, string id);
     public event AxPrepareRequestHandler OnAxPrepareRequest;
     public event AxExecuteRequestHandler OnAxExecuteRequest;
     public static uint msgInQueue;
@@ -33,6 +33,7 @@ public class AMQP
     private IModel channel;
     private EventingBasicConsumer consumer;
     private string consumerTag;
+    private Timer workTimer;
     
     public AMQP(int workerId)
     {
@@ -100,21 +101,24 @@ public class AMQP
         {
             SetState(State.Running);
         }
-
-        var state = GetState();
-        while (state == State.Running || state == State.Paused || state == State.ForcePaused || IsProcessing())
-        {
+        var workAutoResevEvent = new AutoResetEvent(false);
+        workTimer = new Timer((obj) => {
             if (!connection.IsOpen || !channel.IsOpen)
             {
-                log("Connection and/or channel are closed " + state, "error");
-                StopConsume();
                 SetState(State.Error);
-                errorCount++;
+                StopConsume();
             }
-            Thread.Sleep(1000);
-            state = GetState();
-        }
-
+            var st = GetState();
+            if (!(st == State.Running
+                || st == State.Paused
+                || st == State.ForcePaused
+                || IsProcessing()))
+            {
+                workTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                workAutoResevEvent.Set();
+            }
+        }, null, 0, 1000);
+        workAutoResevEvent.WaitOne();
         TryDisconnect();
         if (GetState() != State.Error)
         {
@@ -154,7 +158,7 @@ public class AMQP
             }
             else
             {
-                log("Connection and/or channel are closed " + GetState(), "error");
+                log("StartConsume() Connection and/or channel are closed " + GetState(), "error");
                 SetState(State.Error);
                 errorCount++;
             }
@@ -191,7 +195,8 @@ public class AMQP
             }
             else
             {
-                log("Connection and/or channel are closed " + GetState(), "error");
+                consumerTag = "";
+                log("StopConsume() Connection and/or channel are closed " + GetState(), "error");
                 SetState(State.Error);
                 errorCount++;
             }
@@ -206,92 +211,88 @@ public class AMQP
         StringBuilder msg = new StringBuilder();
         try
         {
-            msgInQueue = channel.MessageCount(queue);
-            string message = (ea.Body != null && ea.Body.Length != 0) ? Encoding.UTF8.GetString(ea.Body) : "{}";
-            IBasicProperties props = ea.BasicProperties;
-            string ReplyTo = props.IsReplyToPresent() ? props.ReplyTo : "";
-            string CorrelationId = props.IsCorrelationIdPresent() ? props.CorrelationId : "";
-            IDictionary<string,dynamic> headers = props.IsHeadersPresent()
-                ? props.Headers : new Dictionary<string,object>();
-            string method = headers.ContainsKey("method") && headers["method"] != null
-                ? Encoding.UTF8.GetString(headers["method"]) : "";
-            string rpc_id = headers.ContainsKey("rpc_id") && headers["rpc_id"] != null
-                ? Encoding.UTF8.GetString(headers["rpc_id"]) : "";
+            isProcessing = true;
+            var message = UnwrapMessage(ea);
 
             State state = GetState();
             msg.AppendFormat(
                 "st={0};method={1};rpc_id={2};ReplyTo={3};CorId={4};msg={5}",
-                state, method, rpc_id, ReplyTo, CorrelationId,
-                Regex.Replace(message, "(user_hash(?:[^0-9,a-f]{3,10})[0-9,a-f]{10})([0-9,a-f]{22})", "$1*", RegexOptions.IgnoreCase)
+                state, message["method"], message["rpc_id"], message["ReplyTo"], message["CorrelationId"],
+                Util.CutUserHash(message["message"])
             );
-            if (state != State.Paused && state != State.ForcePaused && state == State.Running)
+            if (channel.IsOpen)
             {
-                isProcessing = true;
-                Dictionary<string,object> responseObj = new Dictionary<string,object>();
-                dynamic request = null;
-                AxCon.RequestState axRequestState = AxCon.RequestState.NotApplicable;
-                try
+                if (state != State.Paused && state != State.ForcePaused && state == State.Running)
                 {
-                    request = JSON.Parse(message);
-                }
-                catch
-                {
-                    responseObj["result"] = null;
-                    responseObj["error"] = new Dictionary<string,object>(){
-                        {"code", -32600},
-                        {"message", "Invalid Request. The JSON sent is not a valid Request object"}
-                    };
-                    responseObj["elapsed"] = 0;
-                    msg.Insert(0, "invalid request;");
-                }
-                if (request != null)
-                {
-                    axRequestState = OnAxPrepareRequest(this, method, request, rpc_id);
-                    msg = msg.Insert(0, string.Format("reqSt={0};", axRequestState));
-                }
-                if (axRequestState == AxCon.RequestState.PrepOk || axRequestState == AxCon.RequestState.PrepWarn || request == null)
-                {
-                    channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
-                    msg.Insert(0, "ack;");
+                    Dictionary<string,object> responseObj = new Dictionary<string,object>();
+                    dynamic request = null;
+                    AxCon.RequestState axRequestState = AxCon.RequestState.NotApplicable;
+                    try
+                    {
+                        request = JSON.Parse(message["message"]);
+                    }
+                    catch
+                    {
+                        responseObj["result"] = null;
+                        responseObj["error"] = new Dictionary<string,object>(){
+                            {"code", -32600},
+                            {"message", "Invalid Request. The JSON sent is not a valid Request object"}
+                        };
+                        responseObj["elapsed"] = 0;
+                        msg.Insert(0, "invalid request;");
+                    }
                     if (request != null)
                     {
-                        responseObj = OnAxExecuteRequest(this, method, request, rpc_id);
+                        axRequestState = OnAxPrepareRequest(this, message["method"], request, message["rpc_id"]);
+                        msg.Insert(0, string.Format("reqSt={0};", axRequestState));
                     }
-                    string response = JSON.ToJSON(responseObj);
-                    if (ReplyTo != "" && CorrelationId != "")
+                    if (axRequestState == AxCon.RequestState.PrepOk || axRequestState == AxCon.RequestState.PrepWarn || request == null)
                     {
-                        props = channel.CreateBasicProperties();
-                        props.CorrelationId = CorrelationId;
-                        channel.BasicPublish(
-                            exchange: "",
-                            routingKey: ReplyTo,
-                            basicProperties: props,
-                            body: Encoding.UTF8.GetBytes(response)
-                        );
-                        msg.Insert(0, "publish;");
+                        channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                        msg.Insert(0, "ack;");
+                        if (request != null)
+                        {
+                            responseObj = OnAxExecuteRequest(this, message["rpc_id"]);
+                        }
+                        string response = JSON.ToJSON(responseObj);
+                        if (message["ReplyTo"] != "" && message["CorrelationId"] != "")
+                        {
+                            IBasicProperties props = channel.CreateBasicProperties();
+                            props.CorrelationId = message["CorrelationId"];
+                            channel.BasicPublish(
+                                exchange: "",
+                                routingKey: message["ReplyTo"],
+                                basicProperties: props,
+                                body: Encoding.UTF8.GetBytes(response)
+                            );
+                            msg.Insert(0, "publish;");
+                        }
+                        msgCount++;
                     }
-                    msgCount++;
+                    else if (axRequestState == AxCon.RequestState.PrepErr)
+                    {
+                        channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
+                        msg.Insert(0, "Nack;");
+                    }
                 }
-                else if (axRequestState == AxCon.RequestState.PrepErr)
+                else
                 {
                     channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
                     msg.Insert(0, "Nack;");
                 }
+                msgInQueue = channel.MessageCount(queue);
             }
             else
             {
-                channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
-                msg.Insert(0, "Nack;");
+                msg.Insert(0, "channel closed;");
             }
         }
         // catch (AlreadyClosedException e)
         catch (Exception e)
         {
-            StopConsume();
             SetState(State.Error);
             log(e, "error");
-            errorCount++;
-            msg.Insert(0, "st=State.Error;");
+            msg.Insert(0, string.Format("st={0};", State.Error));
         }
         finally
         {
@@ -300,6 +301,22 @@ public class AMQP
         }
     }
 
+    private Dictionary<string,string> UnwrapMessage(BasicDeliverEventArgs ea)
+    {
+        var result = new Dictionary<string,string>();
+        result["message"] = (ea.Body != null && ea.Body.Length != 0) ? Encoding.UTF8.GetString(ea.Body) : "{}";
+        IBasicProperties props = ea.BasicProperties;
+        result["ReplyTo"] = props.IsReplyToPresent() ? props.ReplyTo : "";
+        result["CorrelationId"] = props.IsCorrelationIdPresent() ? props.CorrelationId : "";
+        IDictionary<string,dynamic> headers = props.IsHeadersPresent()
+            ? props.Headers : new Dictionary<string,object>();
+        result["method"] = headers.ContainsKey("method") && headers["method"] != null
+            ? Encoding.UTF8.GetString(headers["method"]) : "";
+        result["rpc_id"] = headers.ContainsKey("rpc_id") && headers["rpc_id"] != null
+            ? Encoding.UTF8.GetString(headers["rpc_id"]) : "";
+        return result;
+    }
+    
     public bool GetAsyncInitTimedOut()
     {
         lock (lockOn) return asyncInitTimedOut;
@@ -376,7 +393,7 @@ public class AMQP
         lock (lockOn)
         {
             State state = GetState();
-            if (state != State.Running && state != State.Paused && state != State.ForcePaused && state != AMQP.State.Connect)
+            if (state != State.Running && state != State.Paused && state != State.ForcePaused && state != State.Connect)
             {
                 TryDisconnect();
                 SetState(State.Stopped);
