@@ -51,14 +51,13 @@ public class AxCon
         new Dictionary<string,object>(){{"code", -32000}, {"message", "Server error"}};
     private object lockOn = new object();
     public Stopwatch stopwatch = new Stopwatch();
+    public bool isBusinessConnectorInstanceInvalid = false;
+    public event Action OnProcessCorruptedStateException;
     
     public AxCon(int workerId)
     {
         this.workerId = workerId;
         ax = new Axapta();
-        #if AxMock
-        ax = new Axapta(config["methods"], isThrowExceptions: true);
-        #endif
     }
     
     static AxCon()
@@ -115,6 +114,10 @@ public class AxCon
         // catch (AlreadyLoggedOnException e)
         catch (Exception e)
         {
+            if (e is BusinessConnectorInstanceInvalid)
+            {
+                isBusinessConnectorInstanceInvalid = true;
+            }
             if (!GetAsyncInitTimedOut())
             {
                 SetState(State.InitError);
@@ -460,6 +463,7 @@ public class AxCon
         }
         catch (AccessViolationException e)
         {
+            OnProcessCorruptedStateException();
             log(string.Format(
                 "workerId={0} class={1} method={2} params={3} {4}",
                 workerId,

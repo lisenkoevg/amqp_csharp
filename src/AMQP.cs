@@ -103,19 +103,19 @@ public class AMQP
         }
         var workAutoResevEvent = new AutoResetEvent(false);
         workTimer = new Timer((obj) => {
-            if (!connection.IsOpen || !channel.IsOpen)
-            {
-                SetState(State.Error);
-                StopConsume();
-            }
             var st = GetState();
             if (!(st == State.Running
                 || st == State.Paused
                 || st == State.ForcePaused
                 || IsProcessing()))
             {
+                StopConsume();
                 workTimer.Change(Timeout.Infinite, Timeout.Infinite);
                 workAutoResevEvent.Set();
+            }
+            if (!(connection.IsOpen && channel.IsOpen) && st != State.Stopped && st != State.StopPend)
+            {
+                SetState(State.Error);
             }
         }, null, 0, 1000);
         workAutoResevEvent.WaitOne();
@@ -389,7 +389,6 @@ public class AMQP
 
     public void StopPend()
     {
-        StopConsume();
         lock (lockOn)
         {
             State state = GetState();
