@@ -313,13 +313,13 @@ public class AMQP
         result["debug"] = "";
         if (ea.Body != null)
         {
-            result["debug"] += "body is " + ea.Body.GetType().Name;
             if (ea.Body is byte[])
             {
                 result["message"] = Encoding.UTF8.GetString(ea.Body);
             }
             else
             {
+                result["debug"] += "body is " + ea.Body.GetType().Name;
                 result["debug"] += string.Format(" ({0})", ea.Body.ToString());
             }
         }
@@ -334,25 +334,25 @@ public class AMQP
             IDictionary<string,object> headers = props.Headers;
             if (headers.ContainsKey("method") && headers["method"] != null)
             {
-                result["debug"] += ", headers[method] is " + headers["method"].GetType().Name;
                 if (headers["method"] is byte[])
                 {
                     result["method"] = Encoding.UTF8.GetString((byte[])headers["method"]);
                 }
                 else
                 {
+                    result["debug"] += ", headers[method] is " + headers["method"].GetType().Name;
                     result["debug"] += string.Format(" ({0})", headers["method"].ToString());
                 }
             }
             if (headers.ContainsKey("rpc_id") && headers["rpc_id"] != null)
             {
-                result["debug"] += ", headers[rpc_id] is " + headers["rpc_id"].GetType().Name;
                 if (headers["rpc_id"] is byte[])
                 {
                     result["rpc_id"] = Encoding.UTF8.GetString((byte[])headers["rpc_id"]);
                 }
                 else
                 {
+                    result["debug"] += ", headers[rpc_id] is " + headers["rpc_id"].GetType().Name;
                     result["debug"] += string.Format(" ({0})", headers["rpc_id"].ToString());
                 }
             }
