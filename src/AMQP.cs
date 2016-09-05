@@ -215,9 +215,9 @@ public class AMQP
 
             State state = GetState();
             msg.AppendFormat(
-                "st={0};method={1};rpc_id={2};ReplyTo={3};CorId={4};msg={5}",
+                "st={0};method={1};rpc_id={2};ReplyTo={3};CorId={4};msg={5};debug={6}",
                 state, message["method"], message["rpc_id"], message["ReplyTo"], message["CorrelationId"],
-                Util.CutUserHash(message["message"])
+                Util.CutUserHash(message["message"]), message["debug"]
             );
             if (channel.IsOpen)
             {
@@ -229,6 +229,10 @@ public class AMQP
                     try
                     {
                         request = JSON.Parse(message["message"]);
+                        if (!(request is IDictionary))
+                        {
+                            request = new Dictionary<string,object>();
+                        }
                     }
                     catch
                     {
@@ -304,16 +308,54 @@ public class AMQP
     private Dictionary<string,string> UnwrapMessage(BasicDeliverEventArgs ea)
     {
         var result = new Dictionary<string,string>();
-        result["message"] = (ea.Body != null && ea.Body.Length != 0) ? Encoding.UTF8.GetString(ea.Body) : "{}";
+        result["message"] = "{}";
+        result["debug"] = "";
+        if (ea.Body != null)
+        {
+            result["debug"] += "body is " + ea.Body.GetType().Name;
+            if (ea.Body is byte[])
+            {
+                result["message"] = Encoding.UTF8.GetString(ea.Body);
+            }
+            else
+            {
+                result["debug"] += string.Format(" ({0})", ea.Body.ToString());
+            }
+        }
         IBasicProperties props = ea.BasicProperties;
         result["ReplyTo"] = props.IsReplyToPresent() ? props.ReplyTo : "";
         result["CorrelationId"] = props.IsCorrelationIdPresent() ? props.CorrelationId : "";
-        IDictionary<string,dynamic> headers = props.IsHeadersPresent()
-            ? props.Headers : new Dictionary<string,object>();
-        result["method"] = headers.ContainsKey("method") && headers["method"] != null
-            ? Encoding.UTF8.GetString(headers["method"]) : "";
-        result["rpc_id"] = headers.ContainsKey("rpc_id") && headers["rpc_id"] != null
-            ? Encoding.UTF8.GetString(headers["rpc_id"]) : "";
+        
+        result["method"] = "";
+        result["rpc_id"] = "";
+        if (props.IsHeadersPresent())
+        {
+            IDictionary<string,object> headers = props.Headers;
+            if (headers.ContainsKey("method") && headers["method"] != null)
+            {
+                result["debug"] += ", headers[method] is " + headers["method"].GetType().Name;
+                if (headers["method"] is byte[])
+                {
+                    result["method"] = Encoding.UTF8.GetString((byte[])headers["method"]);
+                }
+                else
+                {
+                    result["debug"] += string.Format(" ({0})", headers["method"].ToString());
+                }
+            }
+            if (headers.ContainsKey("rpc_id") && headers["rpc_id"] != null)
+            {
+                result["debug"] += ", headers[rpc_id] is " + headers["rpc_id"].GetType().Name;
+                if (headers["rpc_id"] is byte[])
+                {
+                    result["rpc_id"] = Encoding.UTF8.GetString((byte[])headers["rpc_id"]);
+                }
+                else
+                {
+                    result["debug"] += string.Format(" ({0})", headers["rpc_id"].ToString());
+                }
+            }
+        }
         return result;
     }
     
