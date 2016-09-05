@@ -394,7 +394,7 @@ public class AMQPManager
                     task.Wait();
                     if (!waitSuccess)
                     {
-                        amqp.log("Connection timeout workerId=" + amqp.workerId, "error");
+                        AMQP.logger.Log(amqp.workerId, "Connection timeout", "error");
                     }
                 }
             );
@@ -435,7 +435,7 @@ public class AMQPManager
                     task.Wait();
                     if (!waitSuccess)
                     {
-                        axcon.log(action.Method.Name + " timeout workerId=" + axcon.workerId, "error");
+                        AxCon.logger.Log(axcon.workerId, action.Method.Name + " timeout", "error");
                     }
                 }
             );
@@ -540,8 +540,8 @@ public class AMQPManager
                 {"elapsed", axcon.stopwatch.ElapsedMilliseconds}
             };
         }
-        axcon.log(response, "response", true);
-        axcon.log(response, "", true, true);
+        AxCon.logger.LogInJSON(axcon.workerId, response, "response");
+        AxCon.logger.LogInJSON(axcon.workerId, response, "", true);
         return response;
     }
 
@@ -1082,6 +1082,7 @@ public class AMQPManager
     {
         try
         {
+            Console.Title = this.GetType().Name;
             var a = Console.KeyAvailable;
             return true;
         }
