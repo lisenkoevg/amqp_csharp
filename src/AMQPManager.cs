@@ -689,7 +689,7 @@ public class AMQPManager
             foreach (var f in files)
             {
                 long length = new System.IO.FileInfo(f).Length;
-                if (length == 0)
+                if (length < 5)
                 {
                     File.Delete(f);
                 }
