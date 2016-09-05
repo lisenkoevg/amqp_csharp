@@ -19,8 +19,8 @@ public class AMQPManager
     private int axconRequestTimeout = 60000;
     private int workersCheckPeriod = 15000;
     private bool axconUseClassPool = true;
-    private int startupWorkersCount;
-    private readonly Process cur_proc = Process.GetCurrentProcess();
+    private int startupWorkersCount = 3;
+    private static readonly Process cur_proc = Process.GetCurrentProcess();
     private readonly DateTime startTime = DateTime.Now;
     private readonly bool isConsoleAvailable;
     private Dictionary<int, AMQP> amqpDic = new Dictionary<int, AMQP>();
@@ -38,7 +38,7 @@ public class AMQPManager
     private bool isWorkersRestarting = false;
     private bool exitScheduled = false;
     private bool restartScheduled = false;
-    private bool newInstanceSpawned = false;
+    private static bool newInstanceSpawned = false;
     private bool isBusinessConnectorInstanceInvalid;
     private string userInput = "";
     private string infoMsg = "";
@@ -51,31 +51,30 @@ public class AMQPManager
     private object lockOn = new object();
     private StringBuilder output = new StringBuilder();
     private string lastPrint = "";
-    
+
     public static void Main(string[] args)
     {
         ChDir();
         Directory.CreateDirectory(logDir);
-
-        int count;
+        
         AMQPManager am;
-        if (args.Length > 0 && Int32.TryParse(args[0], out count))
+        if (args.Length == 0 || args[0] != "newInstance")
         {
-            am = new AMQPManager(count);
+            SpawnNewInstance();
         }
         else
         {
-            am = new AMQPManager(0);
+            am = new AMQPManager();
         }
     }
 
-    public AMQPManager(int count)
+    public AMQPManager()
     {
-        Configure(ref count);
+        Configure();
 
         isConsoleAvailable = IsConsoleAvailable();
         var thrd = new Thread(Work);
-        thrd.Start(count);
+        thrd.Start(startupWorkersCount);
 
         outputTimer = new Timer((obj) =>
             {
@@ -92,7 +91,7 @@ public class AMQPManager
         outputAutoResetEvent.WaitOne();
     }
 
-    private void Configure(ref int count)
+    private void Configure()
     {
         var conf = ConfigLoader.LoadFile("./config/managerConfig.yaml");
         int parsedValue = 0;
@@ -101,17 +100,13 @@ public class AMQPManager
         {
             maxWorkersCount = parsedValue;
         }
-        if (count == 0 &&
-            conf.ContainsKey("startupWorkersCount") && Int32.TryParse(conf["startupWorkersCount"], out parsedValue)
-            )
+        if (conf.ContainsKey("startupWorkersCount") && Int32.TryParse(conf["startupWorkersCount"], out parsedValue))
         {
-            count = parsedValue;
+            if (parsedValue > 0 && parsedValue <= maxWorkersCount)
+            {
+                startupWorkersCount = parsedValue;
+            }
         }
-        if (count < 0 || count > maxWorkersCount)
-        {
-            count = 1;
-        }
-        startupWorkersCount = count;
         if (conf.ContainsKey("amqpInitTimeout") && Int32.TryParse(conf["amqpInitTimeout"], out parsedValue))
         {
             amqpInitTimeout = parsedValue;
@@ -655,7 +650,7 @@ public class AMQPManager
         }
         return result;
     }
-    
+
     private void ScheduleApplicationExit(bool restart = false)
     {
         if (!exitScheduled)
@@ -666,16 +661,41 @@ public class AMQPManager
             checkWorkersTimer.Change(0, workersCheckPeriod);
         }
     }
-    
+
     private void ScheduleApplicationRestart()
     {
         ScheduleApplicationExit(true);
     }
-    
-    private void SpawnNewInstance()
+
+    private static void SpawnNewInstance(bool redirectError = true)
     {
         newInstanceSpawned = true;
-        Process.Start(cur_proc.MainModule.FileName);
+        var psi = new ProcessStartInfo();
+        string prefix = "UnhandledException";
+        if (redirectError)
+        {
+            psi.FileName = "cmd.exe";
+            psi.Arguments = string.Format("/c {0} newInstance 2>>log\\{1}{2}.log", cur_proc.MainModule.FileName, prefix, cur_proc.Id);
+        }
+        else
+        {
+            psi.FileName = cur_proc.MainModule.FileName;
+        }
+        Process.Start(psi);
+        
+        try
+        {
+            var files = Directory.GetFiles(Environment.CurrentDirectory + "\\log", prefix + "*.log");
+            foreach (var f in files)
+            {
+                long length = new System.IO.FileInfo(f).Length;
+                if (length == 0)
+                {
+                    File.Delete(f);
+                }
+            }
+        }
+        catch {}
     }
 
     private void HandleInput(ConsoleKeyInfo ki)
