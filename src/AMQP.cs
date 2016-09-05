@@ -35,6 +35,7 @@ public class AMQP
     private EventingBasicConsumer consumer;
     private string consumerTag;
     private Timer workTimer;
+    public static Logger logger = new Logger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType.Name);
     
     public AMQP(int workerId)
     {
@@ -78,7 +79,7 @@ public class AMQP
             {
                 SetState(State.InitError);
             }
-            log(e, "error");
+            logger.Log(workerId, e, "error");
             errorCount++;
         }
         // dbg.fa(string.Format(
@@ -149,7 +150,7 @@ public class AMQP
                     {
                         SetState(State.Error);
                         errorCount++;
-                        log(e, "error");
+                        logger.Log(workerId, e, "error");
                     }
                 }
                 else
@@ -159,7 +160,7 @@ public class AMQP
             }
             else
             {
-                log("Start_Consume() Connection and/or channel are closed " + GetState(), "error");
+                logger.Log(workerId, "Start_Consume() Connection and/or channel are closed st=" + GetState(), "error");
                 SetState(State.Error);
             }
         }
@@ -185,7 +186,7 @@ public class AMQP
                     {
                         SetState(State.Error);
                         errorCount++;
-                        log(e, "error");
+                        logger.Log(workerId, e, "error");
                     }
                 }
                 else
@@ -195,8 +196,8 @@ public class AMQP
             }
             else
             {
+                logger.Log(workerId, "Stop_Consume() Connection and/or channel are closed st=" + GetState() + " consumerTag=" + consumerTag, "error");
                 consumerTag = "";
-                log("Stop_Consume() Connection and/or channel are closed " + GetState(), "error");
                 SetState(State.Error);
             }
         }
@@ -291,13 +292,13 @@ public class AMQP
         {
             SetState(State.Error);
             errorCount++;
-            log(e, "error");
+            logger.Log(workerId, e, "error");
             msg.Insert(0, string.Format("st={0};", State.Error));
         }
         finally
         {
             isProcessing = false;
-            log(msg,"request");
+            logger.Log(workerId, msg, "request");
         }
     }
 
@@ -425,46 +426,5 @@ public class AMQP
     {
         lock (lockOn)
             return isProcessing;
-    }
-
-    public void log(object obj, string fileSuffix = "")
-    {
-        int tries = 100;
-        int i = 0;
-        while(!log_(obj, fileSuffix) && i < tries)
-        {
-            Thread.Sleep(100);
-            i++;
-        }
-        if (i > 0)
-        {
-            dbg.fa(string.Format("{0} log iteration is {2}",this.GetType().Name, i));
-        }
-    }
-    private static object lockOnSt = new Object();
-    private bool log_(object obj, string fileSuffix = "")
-    {
-        bool success = false;
-        fileSuffix = (fileSuffix != "") ? "_" + fileSuffix : "";
-        DateTime dtNow = DateTime.Now;
-        string timestamp = dtNow.ToString("yyyy-MM-dd HH:mm:ss");
-        string basename = this.GetType().Name;
-        string file_name = basename + fileSuffix + ".log";
-        string dir = AMQPManager.logDir + "\\" + dtNow.ToString("yyyyMMdd");
-        
-        lock (lockOnSt)
-        {
-            try
-            {
-                Directory.CreateDirectory(dir);
-                using (StreamWriter writer = new StreamWriter(dir + "\\" + file_name, true))
-                {
-                    writer.WriteLine("{0};pid={1};wid={2,2};{3}", timestamp, pid, workerId, obj.ToString());
-                }
-                success = true;
-            }
-            catch {}
-        }
-        return success;
     }
 }
