@@ -1,8 +1,7 @@
-#define AxMock
-
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using System.Runtime.InteropServices;
 
 namespace Microsoft.Dynamics.BusinessConnectorNet {
     class Axapta {
@@ -13,10 +12,10 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         {
             return random.Next(a, b);
         }
-        public Axapta(dynamic methods_conf = null, bool isThrowExceptions = true)
+        public Axapta()
         {
-            methods_config = methods_conf;
-            Axapta.isThrowExceptions = isThrowExceptions;
+            methods_config = AxCon.config["methods"];
+            Axapta.isThrowExceptions = false;
         }
        
         public bool Logon(string str1, string str2, string str3, string str4)
@@ -49,7 +48,6 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
     class AxaptaObject
     {
         public string Name {get; set;}
-        public Random rnd = new Random();
         
         public AxaptaObject(string objName)
         {
@@ -60,7 +58,6 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
             if (method == "run")
             {
                 var n = 100 * Axapta.rnd(1, 20);
-                // dbg.fa(n);
                 Thread.Sleep(n);
                 if (Axapta.isThrowExceptions && Axapta.rnd(0, 20) == 0)
                 {
@@ -75,6 +72,11 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
                     throw new Exception("Call validate() exception");
                 }
             }
+            int k = Axapta.rnd(0, 500);
+            if (k == 0)
+            {
+                GenerateAccessViolationException();
+            }            
             dynamic result = "";
             var outTypeName = GetOutputValueTypeName(method);
             // Console.WriteLine("{0}:{1}:{2}", Name, method, outTypeName);
@@ -170,12 +172,21 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         
         public void Dispose()
         {}
+        
+        public static void GenerateAccessViolationException()
+        {
+            var ptr = new IntPtr(42);
+            Marshal.StructureToPtr(42, ptr, true);
+        }
     }
     
     class ServerUnavailableException : Exception
     {
     }
     class SessionTerminatedException : Exception
+    {
+    }
+    class BusinessConnectorInstanceInvalid : Exception
     {
     }
 }
