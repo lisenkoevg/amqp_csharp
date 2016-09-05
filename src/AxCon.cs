@@ -50,6 +50,7 @@ public class AxCon
     private static readonly Dictionary<string,object> errorMsg =
         new Dictionary<string,object>(){{"code", -32000}, {"message", "Server error"}};
     private object lockOn = new object();
+    private static int pid = Process.GetCurrentProcess().Id;
     public Stopwatch stopwatch = new Stopwatch();
     public bool isBusinessConnectorInstanceInvalid = false;
     public event Action OnProcessCorruptedStateException;
@@ -162,8 +163,6 @@ public class AxCon
         // catch (BusinessConnectorInstanceInvalid e)
         catch (Exception e)
         {
-            // axClassPool.Clear();
-            // ax = new Axapta();
             if (!GetAsyncInitTimedOut())
             {
                 SetState(State.FinError);
@@ -307,7 +306,8 @@ public class AxCon
         {
             aReqTimedOut = GetAsyncRequestTimedOut();
             logFileSuffix = !aReqTimedOut ? "prepare_axWarning" : "prepare_axWarning_timedOut_skipped";
-            log(e, logFileSuffix);
+            // log(e, logFileSuffix);
+            log(string.Format("method={0};params={1};id={2};{3}", request["method"], Util.CutUserHash(Util.ToJSON( request["params"])), request["id"], e.ToString()), logFileSuffix);
             if (!aReqTimedOut)
             {
                 SetRequestState(RequestState.PrepWarn);
@@ -319,7 +319,8 @@ public class AxCon
         {
             aReqTimedOut = GetAsyncRequestTimedOut();
             logFileSuffix = !aReqTimedOut ? "prepare_axException" : "prepare_axException_timedOut_skipped";
-            log(e, logFileSuffix);
+            // log(e, logFileSuffix);
+            log(string.Format("method={0};params={1};id={2};{3}", request["method"], Util.CutUserHash(Util.ToJSON( request["params"])), request["id"], e.ToString()), logFileSuffix);
             if (!aReqTimedOut)
             {
                 SetRequestState(RequestState.PrepWarn);
@@ -329,9 +330,14 @@ public class AxCon
         }
         catch (Exception e)
         {
+            if (e is BusinessConnectorInstanceInvalid)
+            {
+                isBusinessConnectorInstanceInvalid = true;
+            }
             aReqTimedOut = GetAsyncRequestTimedOut();
             logFileSuffix = !aReqTimedOut ? "prepare_exception" : "prepare_exception_timedOut_skipped";
-            log(e, logFileSuffix);
+            // log(e, logFileSuffix);
+            log(string.Format("method={0};params={1};id={2};{3}", request["method"], Util.CutUserHash(Util.ToJSON( request["params"])), request["id"], e.ToString()), logFileSuffix);
             if (!aReqTimedOut)
             {
                 SetRequestState(RequestState.PrepErr);
@@ -390,7 +396,8 @@ public class AxCon
         {
             aReqTimedOut = GetAsyncRequestTimedOut();
             logFileSuffix = !aReqTimedOut ? "request_axException" : "request_axException_timedOut_skipped";
-            log(e, logFileSuffix);
+            // log(e, logFileSuffix);
+            log(string.Format("method={0};params={1};id={2};{3}", request["method"], Util.CutUserHash(Util.ToJSON( request["params"])), request["id"], e.ToString()), logFileSuffix);
             if (!aReqTimedOut)
             {
                 SetRequestState(RequestState.WaitReq);
@@ -402,7 +409,8 @@ public class AxCon
         {
             aReqTimedOut = GetAsyncRequestTimedOut();
             logFileSuffix = !aReqTimedOut ? "request_exception" : "request_exception_timedOut_skipped";
-            log(e, logFileSuffix);
+            log(string.Format("method={0};params={1};id={2};{3}", request["method"], Util.CutUserHash(Util.ToJSON( request["params"])), request["id"], e.ToString()), logFileSuffix);
+            // log(e, logFileSuffix);
             if (!aReqTimedOut)
             {
                 SetRequestState(RequestState.ReqErr);
@@ -465,25 +473,17 @@ public class AxCon
         {
             OnProcessCorruptedStateException();
             log(string.Format(
-                "workerId={0} class={1} method={2} params={3} {4}",
+                "{0} workerId={1} class={2} method={3} params={4}",
+                e.GetType(),
                 workerId,
                 GetKeyByValue(ax_class, axClassPool),
                 method,
-                string.Join(",", prms),
-                e.GetType()
-            ), "call");
+                Util.CutUserHash(Util.ToJSON(prms))
+            ), "AccessViolationException");
             throw e;
         }
         catch (Exception e)
         {
-            log(string.Format(
-                "workerId={0} class={1} method={2} params={3} {4}",
-                workerId,
-                GetKeyByValue(ax_class, axClassPool),
-                method,
-                string.Join(",", prms),
-                e.GetType()
-            ), "call");
             throw e;
         }
         return result;
@@ -837,9 +837,24 @@ public class AxCon
         return result;
     }
 
-    private static object lockOnSt = new object();
     public void log(object obj, string fileSuffix = "", bool toJSON = false, bool includeWorkerIdToFileName = false)
     {
+        int tries = 100;
+        int i = 0;
+        while(!log_(obj, fileSuffix, toJSON, includeWorkerIdToFileName) && i < tries)
+        {
+            Thread.Sleep(100);
+            i++;
+        }
+        if (i > 0)
+        {
+            dbg.fa(string.Format("{0} log iteration is {2}",this.GetType().Name, i));
+        }
+    }
+    private static object lockOnSt = new object();
+    private bool log_(object obj, string fileSuffix = "", bool toJSON = false, bool includeWorkerIdToFileName = false)
+    {
+        bool success = false;
         fileSuffix = (fileSuffix != "") ? "_" + fileSuffix : "";
         DateTime dtNow = DateTime.Now;
         string timestamp = dtNow.ToString("yyyy-MM-dd HH:mm:ss");
@@ -855,30 +870,31 @@ public class AxCon
         }
         try
         {
-            using (StreamWriter writer = new StreamWriter(dir + "\\" + file_name, true))
+            string msg = "";
+            if (!toJSON)
             {
-                if (!toJSON)
+                msg = obj.ToString();
+            }
+            else
+            {
+                JSONParameters prms = new JSONParameters();
+                prms.UseEscapedUnicode = false;
+                try
                 {
-                    writer.WriteLine("{0};{1,3};{2}", timestamp, workerId, obj.ToString());
+                    msg = JSON.ToJSON(obj, prms);
+                    msg = Util.CutUserHash(msg);
                 }
-                else
+                catch (Exception e)
                 {
-                    JSONParameters prms = new JSONParameters();
-                    prms.UseEscapedUnicode = false;
-                    string msg = "";
-                    try
-                    {
-                        msg = JSON.ToJSON(obj, prms);
-                        msg = Util.CutUserHash(msg);
-                    }
-                    catch (Exception e)
-                    {
-                        msg = e.ToString();
-                        try { msg += "\nerror['message']=" + dynObj["error"]["message"]; } catch {}
-                    }
-                    writer.WriteLine("{0};{1,3};{2}", timestamp, workerId, msg);
+                    msg = e.ToString();
+                    try { msg += "\nerror['message']=" + dynObj["error"]["message"]; } catch {}
                 }
             }
+            using (StreamWriter writer = new StreamWriter(dir + "\\" + file_name, true))
+            {
+                writer.WriteLine("{0};pid={1};wid={2,2};{3}", timestamp, pid, workerId, msg);
+            }
+            success = true;
         }
         finally
         {
@@ -887,6 +903,7 @@ public class AxCon
                 Monitor.Exit(lockOnSt);
             }
         }
+        return success;
         /*
         if (fatal)
         {

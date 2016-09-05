@@ -38,6 +38,7 @@ public class AMQPManager
     private bool isWorkersRestarting = false;
     private bool exitScheduled = false;
     private bool restartScheduled = false;
+    private bool newInstanceSpawned = false;
     private bool isBusinessConnectorInstanceInvalid;
     private string userInput = "";
     private string infoMsg = "";
@@ -211,11 +212,6 @@ public class AMQPManager
         }
         if (exitScheduled && list.Count == 0)
         {
-            if (restartScheduled)
-            {
-                restartScheduled = false;
-                SpawnNewInstance();
-            }
             inputAutoResetEvent.Set();
             outputAutoResetEvent.Set();
         }
@@ -223,11 +219,10 @@ public class AMQPManager
         {
             ScheduleApplicationRestart();
         }
-        // if (restartScheduled)
-        // {
-            // restartScheduled = false;
-            // SpawnNewInstance();
-        // }
+        if (restartScheduled && !newInstanceSpawned)
+        {
+            SpawnNewInstance();
+        }
     }
 
     private void CheckWorker(int workerId)
@@ -679,6 +674,7 @@ public class AMQPManager
     
     private void SpawnNewInstance()
     {
+        newInstanceSpawned = true;
         Process.Start(cur_proc.MainModule.FileName);
     }
 
@@ -888,13 +884,10 @@ public class AMQPManager
                     axconStateStr.Length <= 7 ? axconStateStr : axconStateStr.Substring(0, 7),
                     axconRequestStateStr.Length <= 8 ? axconRequestStateStr : axconRequestStateStr.Substring(0, 8),
                     axInfo["lastRequestStarttime"] != default(DateTime) ? axInfo["lastRequestStarttime"].ToString("HH:mm:ss") : "",
-                    !(axconRequestState == AxCon.RequestState.NotApplicable
-                        || axconRequestState == AxCon.RequestState.WaitReq
-                        || axconRequestState == AxCon.RequestState.ReqErr
-                        || axconRequestState == AxCon.RequestState.PrepErr
-                        || axcon.GetAsyncRequestTimedOut()
-                        )
-                        && current_req_duration > 0 ? current_req_duration.ToString("0.0") : "",
+                    (axconRequestState == AxCon.RequestState.Request || axconRequestState == AxCon.RequestState.Prepare)
+                        && !axcon.GetAsyncRequestTimedOut()
+                        && amqpState != AMQP.State.Error
+                        && current_req_duration > 0 ? current_req_duration.ToString("0") : "",
                     method.Length <= 14 ? method : method.Substring(0, 14),
                     longestMethod,
                     axInfo["poolCount"]
@@ -914,12 +907,12 @@ public class AMQPManager
         }
         output.AppendLine(string.Format(
             "{0} {1} {2}",
-            restartScheduled ? "Restarting..." : (exitScheduled ? "Exiting..." : ""),
+            (exitScheduled ? "Exiting..." : ""),
             isWaitingWorkersExists ? "Init/start/stop scheduled... " : "",
             IsAsyncTaskChainRunning() ? "Async task running..." : ""
         ).Trim());
         output.AppendLine(string.Format(
-            "Summary: workers={0} amqpMsg={1} axMsg={2} amqpConnErr={3} axConnErr={4} axRequestError={5} axReqTimedOut={6} msgInQueue<{7}>~{8}",
+            "Summary: workers={0} amqpMsg={1} axMsg={2} amqpConnErr={3} axConnErr={4} axRequestError={5} axReqTimedOut={6} msgInQueue<{7}>~{8} pid={9}",
             workersCount,
             total["amqpMsgCount"],
             total["axMsgCount"],
@@ -928,10 +921,11 @@ public class AMQPManager
             total["axRequestErrorCount"],
             total["axRequestTimedOutCount"],
             AMQP.queue,
-            AMQP.msgInQueue
+            AMQP.msgInQueue,
+            cur_proc.Id
         ));
         output.AppendLine(string.Format(
-            "Config: workersCheckPeriod={0}s !amqpInitTimeout={1}s !axInitTimeout={2}s !axRequestTimeout={3}s startupWorkersCount={4} useClassPool={5}\n methods config timestamp={6}",
+            "Config: workersCheckPeriod={0}s !amqpInitTimeout={1}s !axInitTimeout={2}s !axRequestTimeout={3}s startupWorkersCount={4} useClassPool={5}\n        methods config timestamp={6}",
             workersCheckPeriod / 1000.0,
             amqpInitTimeout / 1000.0,
             axconInitTimeout / 1000.0,
@@ -953,8 +947,8 @@ public class AMQPManager
         output.AppendLine("?: Ctrl-R: restart, Ctrl-Q: stop and exit");
         output.AppendLine("?: <id>p: pause/resume worker by <id>, Ctrl-p: pause/resume all running workers");
         output.AppendLine(string.Format(
-            "?: f: force workers check {0}, rc: reload methods config",
-            nextWorkersCheck != default(DateTime) ? "(" + (nextWorkersCheck - dtNow).TotalSeconds.ToString("0") + ")": ""
+            "?: f: force workers check{0}, rc: reload methods config",
+            nextWorkersCheck != default(DateTime) ? " (" + (nextWorkersCheck - dtNow).TotalSeconds.ToString("0") + ")": ""
         ));
         output.AppendLine("Space: pause screen update, Ctrl-C: force exit");
         if (infoMsg != "")
@@ -968,8 +962,8 @@ public class AMQPManager
             {
                 try
                 {
-                    int w = head.Length + 1;
-                    int h = output.ToString().Split('\n').Length + 1;
+                    int w = head.Length + 3;
+                    int h = output.ToString().Split('\n').Length + 3;
                     Console.SetWindowSize(w, h);
                     Console.SetBufferSize(w, h);
                     Console.Clear();
@@ -1050,7 +1044,7 @@ public class AMQPManager
     {
         if (s != lastPrint && dtNow.Second % 2 == 0 && dtNow.Millisecond < 500)
         {
-            string fileName = dtNow.ToString("yyyyMMddHHmmss") + ".log";
+            string fileName = cur_proc.Id + "_" + dtNow.ToString("yyyyMMddHHmmss") + ".log";
             try
             {
                 Directory.CreateDirectory(logDir + "\\print");

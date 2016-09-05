@@ -2,6 +2,7 @@ using System;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Collections;
+using fastJSON;
 
 public static class Util
 {
@@ -92,5 +93,18 @@ public static class Util
     public static string CutUserHash(string s)
     {
         return Regex.Replace(s, "(user_hash(?:[^0-9,a-f]{3,10})[0-9,a-f]{10})([0-9,a-f]{22})", "$1*", RegexOptions.IgnoreCase);
+    }
+    
+    public static string ToJSON(object obj)
+    {
+        string result = "{}";
+        JSONParameters prms = new JSONParameters();
+        prms.UseEscapedUnicode = false;
+        try
+        {
+            result = JSON.ToJSON(obj, prms);
+        }
+        catch {}
+        return result;
     }
 }
