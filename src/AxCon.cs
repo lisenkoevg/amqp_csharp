@@ -55,18 +55,18 @@ public class AxCon
     public bool isBusinessConnectorInstanceInvalid = false;
     public event Action OnProcessCorruptedStateException;
     public static Logger logger = new Logger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType.Name);
-    
+
     public AxCon(int workerId)
     {
         this.workerId = workerId;
         ax = new Axapta();
     }
-    
+
     static AxCon()
     {
         LoadConfig();
     }
-    
+
     public static string LoadConfig()
     {
         string result = "";
@@ -89,7 +89,9 @@ public class AxCon
         }
         return result;
     }
-    
+
+    [System.Runtime.ExceptionServices.HandleProcessCorruptedStateExceptions]
+    [System.Security.SecurityCritical]
     public void Init()
     {
         Stopwatch s = Stopwatch.StartNew();
@@ -114,6 +116,17 @@ public class AxCon
         // catch (ServerUnavailableException e)
         // catch (SessionTerminatedException e)
         // catch (AlreadyLoggedOnException e)
+        catch (AccessViolationException e)
+        {
+            OnProcessCorruptedStateException();
+            SetState(State.InitError);
+            errorCount++;
+            logger.Log(workerId, string.Format(
+                "{0} Init()",
+                e.GetType()
+            ), "AccessViolationException");
+            msg = e.GetType().Name + " " + e.Message;
+        }
         catch (Exception e)
         {
             if (e is BusinessConnectorInstanceInvalid)
@@ -137,6 +150,8 @@ public class AxCon
         ), "init");
     }
 
+    [System.Runtime.ExceptionServices.HandleProcessCorruptedStateExceptions]
+    [System.Security.SecurityCritical]
     public void Fin()
     {
         Stopwatch s = Stopwatch.StartNew();
@@ -161,6 +176,17 @@ public class AxCon
         // catch (ServerUnavailableException e)
         // catch (SessionTerminatedException e)
         // catch (BusinessConnectorInstanceInvalid e)
+        catch (AccessViolationException e)
+        {
+            OnProcessCorruptedStateException();
+            SetState(State.FinError);
+            errorCount++;
+            logger.Log(workerId, string.Format(
+                "{0} Fin()",
+                e.GetType()
+            ), "AccessViolationException");
+            msg = e.GetType().Name + " " + e.Message;
+        }
         catch (Exception e)
         {
             if (!GetAsyncInitTimedOut())
@@ -231,7 +257,7 @@ public class AxCon
     {
         lock (lockOn) asyncRequestTimedOut = result;
     }
-    
+
     private void Logon()
     {
         ax.Logon("rba", "ru", "192.168.3.120:2714", "");
@@ -281,7 +307,7 @@ public class AxCon
             bool validateSuccess = (bool)ax_class_call(axClass, "validate");
             aReqTimedOut = GetAsyncRequestTimedOut();
             if (!aReqTimedOut)
-            {                
+            {
                 if (validateSuccess)
                 {
                     SetRequestState(RequestState.PrepOk);
@@ -351,7 +377,7 @@ public class AxCon
         {
             SetRequestState(RequestState.WaitReq);
             msgCount++;
-            return response;            
+            return response;
         }
         SetRequestState(RequestState.Request);
         if ((string)request["method"] == "describe_methods")
@@ -416,7 +442,7 @@ public class AxCon
         msgCount++;
         return response;
     }
-    
+
     private void LogException(Exception e, string logFileSuffix)
     {
         logger.Log(
@@ -454,7 +480,7 @@ public class AxCon
         }
         return axClassPool[ax_class_name];
     }
-    
+
     [System.Runtime.ExceptionServices.HandleProcessCorruptedStateExceptions]
     [System.Security.SecurityCritical]
     private object ax_class_call(AxaptaObject ax_class, string method, params dynamic[] prms)
@@ -481,9 +507,8 @@ public class AxCon
         {
             OnProcessCorruptedStateException();
             logger.Log(workerId, string.Format(
-                "{0} workerId={1} class={2} method={3} params={4}",
+                "{0} ax_class_call() class={1} method={2} params={3}",
                 e.GetType(),
-                workerId,
                 GetKeyByValue(ax_class, axClassPool),
                 method,
                 Util.CutUserHash(Util.ToJSON(prms))
@@ -546,7 +571,7 @@ public class AxCon
             {
                 throw new AxWarning(string.Format("missing mandatory field: {0}", param_name));
             }
-            
+
             if (Util.GetSubitem(prms, param_name) == null)
                 continue;
 

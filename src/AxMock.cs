@@ -15,16 +15,20 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         public Axapta()
         {
             methods_config = AxCon.config["methods"];
-            Axapta.isThrowExceptions = false;
+            Axapta.isThrowExceptions = true;
         }
-       
+
         public bool Logon(string str1, string str2, string str3, string str4)
         {
             Thread.Sleep(100 * rnd(1,20));
-            
+
             if (Axapta.isThrowExceptions && rnd(0, 20) == 0)
             {
                 throw new Exception("Logon exception");
+            }
+            if (Axapta.rnd(0, 10) == 0)
+            {
+                AxaptaObject.GenerateAccessViolationException();
             }
             return true;
         }
@@ -35,6 +39,10 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
             {
                 throw new Exception("Logoff exception");
             }
+            if (Axapta.rnd(0, 10) == 0)
+            {
+                AxaptaObject.GenerateAccessViolationException();
+            }
             return true;
         }
         public AxaptaObject CreateAxaptaObject(string objName)
@@ -44,11 +52,11 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         public void Dispose()
         {}
     }
-    
+
     class AxaptaObject
     {
         public string Name {get; set;}
-        
+
         public AxaptaObject(string objName)
         {
             Name = objName;
@@ -76,7 +84,7 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
             if (k == 0)
             {
                 GenerateAccessViolationException();
-            }            
+            }
             dynamic result = "";
             var outTypeName = GetOutputValueTypeName(method);
             // Console.WriteLine("{0}:{1}:{2}", Name, method, outTypeName);
@@ -111,12 +119,12 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
             }
             return result;
         }
-        
+
         public dynamic Call(string method)
         {
             return Call(method, null);
         }
-        
+
         public string GetOutputValueTypeName(string method)
         {
             string result = "";
@@ -157,7 +165,7 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
                 || method == "nextTransport"
                 || method == "next"
                 || method == "getAnalogExists"
-                || method == "getQuotationOnly" 
+                || method == "getQuotationOnly"
                 || method == "getApplAreaMandatory"
                 || method == "getPickOnly"
                 || method == "getIsCritical"
@@ -169,17 +177,17 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
             }
             return result;
         }
-        
+
         public void Dispose()
         {}
-        
+
         public static void GenerateAccessViolationException()
         {
             var ptr = new IntPtr(42);
             Marshal.StructureToPtr(42, ptr, true);
         }
     }
-    
+
     class ServerUnavailableException : Exception
     {
     }

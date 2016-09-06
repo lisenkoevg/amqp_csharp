@@ -1,8 +1,0 @@
-# timeouts in milliseconds
-amqpInitTimeout: 15000
-axconInitTimeout: 30000
-axconRequestTimeout: 60000
-startupWorkersCount: 3
-maxWorkersCount: 30
-# 1/0
-axconUseClassPool: 0
