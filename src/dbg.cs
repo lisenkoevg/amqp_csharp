@@ -32,30 +32,38 @@ public class dbg
     public static void f(Object obj, string prefix = "")
     {
         string dir = "log";
-        Directory.CreateDirectory(dir);
         string ts = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         prefix = prefix == "" ? prefix : prefix + "_";
         lock (lock_on)
         {
-            if (File.Exists(dir+"/" + prefix + ts + "_" + Convert.ToString(suf) + ".txt")) suf++; else suf = 1;
-            using (StreamWriter writer = File.CreateText(dir+"/" + prefix + ts + "_" + Convert.ToString(suf) + ".txt"))
+            try
             {
-                writer.WriteLine(obj.ToString());
+                Directory.CreateDirectory(dir);
+                if (File.Exists(dir+"/" + prefix + ts + "_" + Convert.ToString(suf) + ".txt")) suf++; else suf = 1;
+                using (StreamWriter writer = File.CreateText(dir+"/" + prefix + ts + "_" + Convert.ToString(suf) + ".txt"))
+                {
+                    writer.WriteLine(obj.ToString());
+                }
             }
+            catch {}
         }
     }
     
     public static void fa(Object obj)
     {
         string dir = "log";
-        Directory.CreateDirectory(dir);
         string ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         lock (lock_on)
         {
-            using (StreamWriter writer = new StreamWriter(dir+"/debug.log", true))
+            try
             {
-                writer.WriteLine("{0};{1,2};{2}", ts, Thread.CurrentThread.ManagedThreadId, obj.ToString());
+                Directory.CreateDirectory(dir);
+                using (StreamWriter writer = new StreamWriter(dir+"/debug.log", true))
+                {
+                    writer.WriteLine("{0};{1,2};{2}", ts, Thread.CurrentThread.ManagedThreadId, obj.ToString());
+                }
             }
+            catch {}
         }
     }
     
@@ -65,7 +73,11 @@ public class dbg
         
         JSONParameters jp = new JSONParameters();
         jp.UseEscapedUnicode = false;
-        result = JSON.ToNiceJSON(obj, jp);
+        try
+        {
+            result = JSON.ToNiceJSON(obj, jp);
+        }
+        catch {}
         if (WriteOutput)
         {
             Console.WriteLine(result);
