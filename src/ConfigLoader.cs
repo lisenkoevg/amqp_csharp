@@ -81,18 +81,18 @@ class ConfigLoader
 
         var deserializer = new Deserializer();
         dynamic yamlObject = new Object();
-        var sr = new StreamReader(path);
         try
         {
-            // Dictionary<object,object>
-            yamlObject = deserializer.Deserialize(sr);
+            using (var sr = new StreamReader(path))
+            {
+                // Dictionary<object,object>
+                yamlObject = deserializer.Deserialize(sr);
+            }
         }
         catch (Exception e)
         {
-            sr.Dispose();
             throw new Exception(string.Format("Exception while deserializing file {0}\n{1}", path, e.Message));
         }
-        sr.Dispose();
         var serializer = new Serializer(SerializationOptions.JsonCompatible);
         var str = new StringWriter();
         serializer.Serialize(str, yamlObject);

@@ -51,7 +51,9 @@ public class AMQPManager
     private object lockOn = new object();
     private StringBuilder output = new StringBuilder();
     private string lastPrint = "";
-
+    private int width = 0;
+    private int height = 0;
+    
     public static void Main(string[] args)
     {
         ChDir();
@@ -66,6 +68,42 @@ public class AMQPManager
         {
             am = new AMQPManager();
         }
+    }
+
+    private static void SpawnNewInstance(bool redirectError = true)
+    {
+        newInstanceSpawned = true;
+        var psi = new ProcessStartInfo();
+        string prefix = "Exception";
+        if (redirectError)
+        {
+            psi.FileName = "cmd.exe";
+            psi.Arguments = string.Format("/c {0} newInstance 2>>{1}\\{2}{3}.log", cur_proc.MainModule.FileName, logDir, prefix, cur_proc.Id);
+        }
+        else
+        {
+            psi.FileName = cur_proc.MainModule.FileName;
+        }
+        Process.Start(psi);
+        ClearExceptionLogs(prefix);
+        ClearExceptionLogs("UnhandledException");
+    }
+    
+    private static void ClearExceptionLogs(string prefix)
+    {
+        try
+        {
+            var files = Directory.GetFiles(Environment.CurrentDirectory + "\\" + logDir, prefix + "*.log");
+            foreach (var f in files)
+            {
+                long length = new System.IO.FileInfo(f).Length;
+                if (length < 5 && Regex.IsMatch(f, prefix + @"\d{1,10}\.log$"))
+                {
+                    File.Delete(f);
+                }
+            }
+        }
+        catch {}
     }
 
     public AMQPManager()
@@ -93,7 +131,16 @@ public class AMQPManager
 
     private void Configure()
     {
-        var conf = ConfigLoader.LoadFile("./config/managerConfig.yaml");
+        dynamic conf = null;
+        try
+        {
+            conf = ConfigLoader.LoadFile("./config/managerConfig.yaml");
+        }
+        catch (Exception e)
+        {
+            try {Console.Error.WriteLine(e.Message);} catch {}
+            Environment.Exit(1);
+        }
         int parsedValue = 0;
 
         if (conf.ContainsKey("maxWorkersCount") && Int32.TryParse(conf["maxWorkersCount"], out parsedValue))
@@ -426,6 +473,7 @@ public class AMQPManager
                         if (axcon.GetState() == stateBefore)
                         {
                             axcon.SetAsyncInitTimedOut(true);
+                            axcon.errorCount++;
                         }
                         else
                         {
@@ -666,38 +714,7 @@ public class AMQPManager
     {
         ScheduleApplicationExit(true);
     }
-
-    private static void SpawnNewInstance(bool redirectError = true)
-    {
-        newInstanceSpawned = true;
-        var psi = new ProcessStartInfo();
-        string prefix = "UnhandledException";
-        if (redirectError)
-        {
-            psi.FileName = "cmd.exe";
-            psi.Arguments = string.Format("/c {0} newInstance 2>>log\\{1}{2}.log", cur_proc.MainModule.FileName, prefix, cur_proc.Id);
-        }
-        else
-        {
-            psi.FileName = cur_proc.MainModule.FileName;
-        }
-        Process.Start(psi);
-        
-        try
-        {
-            var files = Directory.GetFiles(Environment.CurrentDirectory + "\\log", prefix + "*.log");
-            foreach (var f in files)
-            {
-                long length = new System.IO.FileInfo(f).Length;
-                if (length < 5)
-                {
-                    File.Delete(f);
-                }
-            }
-        }
-        catch {}
-    }
-
+    
     private void HandleInput(ConsoleKeyInfo ki)
     {
         string keyChar = ki.KeyChar.ToString();
@@ -982,12 +999,12 @@ public class AMQPManager
             {
                 try
                 {
+                    string outputStr = output.ToString();
                     int w = head.Length + 3;
-                    int h = output.ToString().Split('\n').Length + 3;
-                    Console.SetWindowSize(w, h);
-                    Console.SetBufferSize(w, h);
+                    int h = outputStr.Split('\n').Length + 3;
+                    SetConsoleSize(w, h);
                     Console.Clear();
-                    Console.Write("{0}\n{1}", output.ToString(), userInput);
+                    Console.Write("{0}\n{1}", outputStr, userInput);
                 }
                 catch (Exception e)
                 {
@@ -1064,7 +1081,7 @@ public class AMQPManager
     {
         if (s != lastPrint && dtNow.Second % 2 == 0 && dtNow.Millisecond < 500)
         {
-            string fileName = cur_proc.Id + "_" + dtNow.ToString("yyyyMMddHHmmss") + ".log";
+            string fileName = cur_proc.Id + "_" + dtNow.ToString("yyyyMMdd_HHmmss") + ".log";
             try
             {
                 Directory.CreateDirectory(logDir + "\\print");
@@ -1091,7 +1108,29 @@ public class AMQPManager
             return false;
         }
     }
-
+    
+    private void SetConsoleSize(int w, int h)
+    {
+        if (w <= 0 || w > 200 || h <= 0 || h > 100) return;
+        if (w != width || h != height)
+        {
+            try
+            {
+                if (w <= Console.LargestWindowWidth)
+                    Console.WindowWidth = w;
+                if (h <= Console.LargestWindowHeight)
+                    Console.WindowHeight = h;
+                Console.SetBufferSize(w, h);
+                width = w;
+                height = h;
+            }
+            catch (Exception e)
+            {
+                dbg.fa(string.Format("WxH={0}x{1} {2}", w, h, e));
+            }
+        }        
+    }
+    
     private static void ChDir()
     {
         String path = System.Reflection.Assembly.GetExecutingAssembly().CodeBase;

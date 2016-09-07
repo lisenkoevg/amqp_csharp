@@ -18,7 +18,7 @@ set ref=/r:RabbitMQ.Client.dll /r:YamlDotNet.dll /r:fastjson.dll %AxaptaRef%
 
 :: for sending testing messages to RabbitMQ
 if exist testSend.exe del testSend.exe
-csc /nologo /main:TestSend testSend\testSend.cs src\ConfigLoader.cs src\Util.cs src\dbg.cs /lib:dll %ref%
+csc /nologo /main:TestSend testSend\testSend.cs %filelist% /lib:dll %ref%
 
 set filelist=src\AMQP.cs src\AMQPManager.cs src\AxCon.cs src\ConfigLoader.cs src\Util.cs src\Logger.cs src\dbg.cs %AxaptaMock%
 csc /nologo /out:AMQPManager.exe /main:AMQPManager %filelist% /lib:dll %define% %ref% /d:DEBUG && set buildSuccess=1

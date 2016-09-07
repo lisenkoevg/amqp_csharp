@@ -51,14 +51,22 @@ public class dbg
     
     public static void fa(Object obj)
     {
-        string dir = "log";
-        string ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        string dir = AMQPManager.logDir;
+        string fileName = dir + "/debug.log";
         lock (lock_on)
         {
             try
             {
                 Directory.CreateDirectory(dir);
-                using (StreamWriter writer = new StreamWriter(dir+"/debug.log", true))
+                if (File.Exists(fileName) && new FileInfo(fileName).Length > 1000000)
+                {
+                    try {
+                        File.Move(fileName, dir + "/debug" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".log");
+                    }
+                    catch {}
+                }
+                string ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                using (StreamWriter writer = new StreamWriter(fileName, true))
                 {
                     writer.WriteLine("{0};{1,2};{2}", ts, Thread.CurrentThread.ManagedThreadId, obj.ToString());
                 }

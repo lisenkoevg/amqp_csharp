@@ -24,8 +24,8 @@ public class AMQP
     public event AxExecuteRequestHandler OnAxExecuteRequest;
     public static uint msgInQueue;
     private bool asyncInitTimedOut = false;
-    private static readonly Dictionary<string,dynamic> settings = ConfigLoader.LoadFile("./config/settings.yaml");
-    public static readonly String queue = settings["amqp"]["queue"];
+    private static Dictionary<string,dynamic> settings;
+    public static String queue;
     private State state = State.Init;
     private bool isProcessing = false;
     private static int pid = Process.GetCurrentProcess().Id;
@@ -40,6 +40,25 @@ public class AMQP
     public AMQP(int workerId)
     {
         this.workerId = workerId;
+    }
+    
+    static AMQP()
+    {
+        LoadConfig();
+    }
+    
+    private static void LoadConfig()
+    {
+        try
+        {
+            settings = ConfigLoader.LoadFile("./config/settings.yaml");
+            queue = settings["amqp"]["queue"];
+        }
+        catch (Exception e)
+        {
+            try {Console.Error.WriteLine(e.Message);} catch {}
+            Environment.Exit(1);
+        }
     }
 
     public void Init()

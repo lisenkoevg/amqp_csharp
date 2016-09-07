@@ -26,7 +26,7 @@ public class AxCon
     public enum State {Init, Login, Ready, Logoff, InitError, FinError};
     public enum RequestState {NotApplicable, WaitReq, Prepare, PrepOk, PrepWarn, PrepErr, Request, ReqErr};
     private int msgCount = 0;
-    private int errorCount = 0;
+    public int errorCount = 0;
     private int requestErrorCount = 0;
     public int requestTimedOutCount = 0;
     private State state = State.Init;
@@ -83,7 +83,7 @@ public class AxCon
         {
             if (config == null)
             {
-                Console.WriteLine(result);
+                try {Console.Error.WriteLine(result);} catch {}
                 Environment.Exit(1);
             }
         }
@@ -106,10 +106,6 @@ public class AxCon
                 {
                     SetState(State.Ready);
                     SetRequestState(RequestState.WaitReq);
-                }
-                else
-                {
-                    errorCount++;
                 }
             }
         }
