@@ -120,7 +120,7 @@ public class AxCon
             logger.Log(workerId, string.Format(
                 "{0} Init()",
                 e.GetType()
-            ), "AccessViolationException");
+            ), "ProcessCorruptedStateExceptions");
             msg = e.GetType().Name + " " + e.Message;
         }
         catch (Exception e)
@@ -180,7 +180,7 @@ public class AxCon
             logger.Log(workerId, string.Format(
                 "{0} Fin()",
                 e.GetType()
-            ), "AccessViolationException");
+            ), "ProcessCorruptedStateExceptions");
             msg = e.GetType().Name + " " + e.Message;
         }
         catch (Exception e)
@@ -467,14 +467,45 @@ public class AxCon
             {"poolCount", axClassPool.Count}
         };
     }
-
+    
+    [System.Runtime.ExceptionServices.HandleProcessCorruptedStateExceptions]
+    [System.Security.SecurityCritical]
     private AxaptaObject GetAxClass(string ax_class_name)
     {
-        if (!axClassPool.ContainsKey(ax_class_name) || !useClassPool)
+        AxaptaObject axObject = null;
+        if (!useClassPool || !axClassPool.ContainsKey(ax_class_name))
         {
-            axClassPool[ax_class_name] = ax.CreateAxaptaObject(ax_class_name);
+            try
+            {
+                axObject = ax.CreateAxaptaObject(ax_class_name);
+            }
+            catch (AccessViolationException e)
+            {
+                OnProcessCorruptedStateException();
+                logger.Log(workerId, string.Format(
+                    "{0} GetAxClass() ax_class_name={1}",
+                    e.GetType(),
+                    ax_class_name
+                ), "ProcessCorruptedStateExceptions");
+                throw e;
+            }
+            catch (Exception e)
+            {
+                throw e;
+            }
         }
-        return axClassPool[ax_class_name];
+        if (useClassPool)
+        {
+            if (axClassPool.ContainsKey(ax_class_name))
+            {
+                axObject = axClassPool[ax_class_name];
+            }
+            else
+            {
+                axClassPool[ax_class_name] = axObject;
+            }
+        }
+        return axObject;
     }
 
     [System.Runtime.ExceptionServices.HandleProcessCorruptedStateExceptions]
@@ -508,7 +539,7 @@ public class AxCon
                 GetKeyByValue(ax_class, axClassPool),
                 method,
                 Util.CutUserHash(Util.ToJSON(prms))
-            ), "AccessViolationException");
+            ), "ProcessCorruptedStateExceptions");
             throw e;
         }
         catch (Exception e)
