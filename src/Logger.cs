@@ -6,7 +6,7 @@ using fastJSON;
 
 public class Logger
 {
-    private static string baseDir = "log";
+    private static string baseDir = AMQPManager.logDir;
     private string baseName;
     private object lockOn = new object();
     private static int pid = Process.GetCurrentProcess().Id;

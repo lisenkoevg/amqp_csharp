@@ -11,18 +11,22 @@ using fastJSON;
 
 public class AMQPManager
 {
-    public static readonly string logDir = "log";
-    private int _workerId = 0;
+    private static string[] cmdArgs;
+
+    private static string configFile = @"config\AMQPManager.yaml";
+    public static string logDir = Path.GetDirectoryName(configFile) + "\\" + "..\\log";
+    private string cmdConfigFile;
     private int maxWorkersCount = 30;
     private int amqpInitTimeout = 15000;
     private int axconInitTimeout = 30000;
     private int axconRequestTimeout = 60000;
     private int workersCheckPeriod = 15000;
-    private bool axconUseClassPool = true;
-    private int startupWorkersCount = 3;
-    private static readonly Process cur_proc = Process.GetCurrentProcess();
+    private bool axconUseClassPool = false;
+    private int startupWorkersCount = 4;
+
+    private readonly Process cur_proc = Process.GetCurrentProcess();
     private readonly DateTime startTime = DateTime.Now;
-    private readonly bool isConsoleAvailable;
+    private bool isConsoleAvailable;
     private Dictionary<int, AMQP> amqpDic = new Dictionary<int, AMQP>();
     private Dictionary<int, AxCon> axconDic = new Dictionary<int, AxCon>();
     private Timer outputTimer;
@@ -32,85 +36,78 @@ public class AMQPManager
     private AutoResetEvent inputAutoResetEvent = new AutoResetEvent(false);
     private AutoResetEvent checkWorkersAutoResetEvent = new AutoResetEvent(true);
     private AutoResetEvent printAutoResetEvent = new AutoResetEvent(true);
+    private int _workerId = 0;
     private int workersCount = 0;
     private bool outputPaused = false;
     private bool inputPaused = false;
     private bool isWorkersRestarting = false;
     private bool exitScheduled = false;
     private bool restartScheduled = false;
-    private static bool newInstanceSpawned = false;
+    private bool newInstanceSpawned = false;
     private bool isBusinessConnectorInstanceInvalid;
-    private string userInput = "";
-    private string infoMsg = "";
-    private int updateScreenPeriod = 500;
-    private int inputPollPeriod = 100;
     private DateTime nextWorkersCheck = default(DateTime);
     private Dictionary<int,Dictionary<string,int>> workersStatistics = new Dictionary<int,Dictionary<string,int>>();
     private Task asyncTaskChainHead = new Task(()=>{});
     private Task asyncTaskChainTail = null;
     private object lockOn = new object();
     private StringBuilder output = new StringBuilder();
+    private string userInput = "";
+    private string infoMsg = "";
     private string lastPrint = "";
+    private int updateScreenPeriod = 500;
+    private int inputPollPeriod = 100;
     private int width = 0;
     private int height = 0;
-    
+
     public static void Main(string[] args)
     {
-        ChDir();
-        Directory.CreateDirectory(logDir);
-        
-        AMQPManager am;
-        if (args.Length == 0 || args[0] != "newInstance")
+        cmdArgs = args;
+        if (GetArg("?") != null || GetArg("h") != null || GetArg("help") != null ||
+            (GetArg("newInstance") == null && GetArg("config") != null && cmdArgs.Length > 1) ||
+            (GetArg("newInstance") == null && GetArg("config") == null && cmdArgs.Length > 0)
+        )
         {
-            SpawnNewInstance();
+            ShowHelp();
+            return;
         }
-        else
-        {
-            am = new AMQPManager();
-        }
+        AMQPManager am = new AMQPManager();
     }
 
-    private static void SpawnNewInstance(bool redirectError = true)
+    private static string GetArg(string parameter)
     {
-        newInstanceSpawned = true;
-        var psi = new ProcessStartInfo();
-        string prefix = "Exception";
-        if (redirectError)
+        string result = null;
+        for (int i = 0; i < cmdArgs.Length; i++)
         {
-            psi.FileName = "cmd.exe";
-            psi.Arguments = string.Format("/c {0} newInstance 2>>{1}\\{2}{3}.log", cur_proc.MainModule.FileName, logDir, prefix, cur_proc.Id);
-        }
-        else
-        {
-            psi.FileName = cur_proc.MainModule.FileName;
-        }
-        Process.Start(psi);
-        ClearExceptionLogs(prefix);
-        ClearExceptionLogs("UnhandledException");
-    }
-    
-    private static void ClearExceptionLogs(string prefix)
-    {
-        try
-        {
-            var files = Directory.GetFiles(Environment.CurrentDirectory + "\\" + logDir, prefix + "*.log");
-            foreach (var f in files)
+            var ar = cmdArgs[i].Split('=');
+            if (ar[0] == "-" + parameter || ar[0] == "/" + parameter)
             {
-                long length = new System.IO.FileInfo(f).Length;
-                if (length < 5 && Regex.IsMatch(f, prefix + @"\d{1,10}\.log$"))
-                {
-                    File.Delete(f);
-                }
+                result = (ar.Length > 1) ? ar[1].Trim() : "";
+                break;
             }
         }
-        catch {}
+        return result;
+    }
+
+    private static void ShowHelp()
+    {
+        String exename = Path.GetFileName(System.Reflection.Assembly.GetExecutingAssembly().CodeBase).Replace("file:\\", "");
+        Console.WriteLine("Command-line options: {0} [-config=<path to config>]", exename);
+        Console.WriteLine("Default config \"{0}\"", configFile);
     }
 
     public AMQPManager()
     {
-        Configure();
-
         isConsoleAvailable = IsConsoleAvailable();
+        ChDir();
+        Configure();
+        PrepareLogDir();
+
+        if (GetArg("newInstance") == null)
+        {
+            SpawnNewInstance();
+            return;
+        }
+
         var thrd = new Thread(Work);
         thrd.Start(startupWorkersCount);
 
@@ -131,18 +128,10 @@ public class AMQPManager
 
     private void Configure()
     {
-        dynamic conf = null;
-        try
-        {
-            conf = ConfigLoader.LoadFile("./config/managerConfig.yaml");
-        }
-        catch (Exception e)
-        {
-            try {Console.Error.WriteLine(e.Message);} catch {}
-            Environment.Exit(1);
-        }
+        dynamic conf = LoadConfig();
+        if (conf == null)
+            return;
         int parsedValue = 0;
-
         if (conf.ContainsKey("maxWorkersCount") && Int32.TryParse(conf["maxWorkersCount"], out parsedValue))
         {
             maxWorkersCount = parsedValue;
@@ -170,6 +159,136 @@ public class AMQPManager
         {
             axconUseClassPool = parsedValue != 0;
         }
+        if (conf.ContainsKey("logDir") && conf["logDir"] != null)
+        {
+            conf["logDir"] = conf["logDir"].Trim();
+            if (conf["logDir"].Length > 0)
+            {
+                logDir = Path.IsPathRooted(conf["logDir"]) ? conf["logDir"] : Path.GetDirectoryName(configFile) + "\\" + conf["logDir"];
+            }
+        }
+    }
+
+    private object LoadConfig()
+    {
+        object result = null;
+        cmdConfigFile = GetArg("config");
+        if (cmdConfigFile != null)
+        {
+            configFile = cmdConfigFile;
+        }
+        if (File.Exists(configFile))
+        {
+            try
+            {
+                result = ConfigLoader.LoadFile(configFile);
+            }
+            catch (Exception e)
+            {
+                try {Console.Error.WriteLine(e.Message);} catch {}
+                Environment.Exit(1);
+            }
+        }
+        else
+        {
+            if (cmdConfigFile != null)
+            {
+                try {Console.Error.WriteLine("Config file '{0}' not found.", configFile);} catch {}
+                Environment.Exit(1);
+            }
+            else
+            {
+                CreateConfigFile();
+            }
+        }
+        return result;
+    }
+
+    private void CreateConfigFile()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(configFile));
+            using (var sw = new StreamWriter(configFile))
+            {
+                sw.WriteLine("# timeouts in milliseconds");
+                sw.WriteLine("amqpInitTimeout: {0}", amqpInitTimeout);
+                sw.WriteLine("axconInitTimeout: {0}", axconInitTimeout);
+                sw.WriteLine("axconRequestTimeout: {0}", axconRequestTimeout);
+                sw.WriteLine("startupWorkersCount: {0}", startupWorkersCount);
+                sw.WriteLine("maxWorkersCount: {0}", maxWorkersCount);
+                sw.WriteLine("# 1/0");
+                sw.WriteLine("axconUseClassPool: {0}", axconUseClassPool ? "1" : "0");
+                sw.WriteLine("# logDir relative to config file or absolute if started with \\ or <letter>:");
+                sw.WriteLine("logDir: {0}", logDir.Substring(Path.GetDirectoryName(configFile).Length + 1));
+            }
+        }
+        catch (Exception e)
+        {
+            try { Console.Error.WriteLine(e); } catch {};
+            Environment.Exit(1);
+        }
+    }
+
+    private void PrepareLogDir()
+    {
+        string testFile = logDir + "\\" + Path.GetRandomFileName();
+        try
+        {
+            Directory.CreateDirectory(logDir);
+            using (var sw = new StreamWriter(testFile))
+            {
+                sw.WriteLine("Check if writable");
+            }
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine("Can't create or write to log dir [{0}]\n{1}", logDir, e);
+            Environment.Exit(1);
+        }
+        finally
+        {
+            try { File.Delete(testFile); } catch {}
+        }
+    }
+
+    private void SpawnNewInstance(bool redirectError = true)
+    {
+        newInstanceSpawned = true;
+        string prefix = "Exception";
+        var psi = new ProcessStartInfo();
+        psi.FileName = "cmd.exe";
+        string config = "";
+        if (cmdConfigFile != null)
+        {
+            config = cmdConfigFile.IndexOf(' ') != -1 ? "\"" + cmdConfigFile + "\"" : cmdConfigFile;
+            config = " -config=" + config;
+        }
+        psi.Arguments = string.Format("/c {0}{1} -newInstance", cur_proc.MainModule.FileName, config);
+        if (redirectError)
+        {
+            psi.Arguments += string.Format(" 2>>\"{0}\\{1}{2}.log\"", logDir, prefix, cur_proc.Id);
+        }
+        Process.Start(psi);
+        ClearExceptionLogs(prefix);
+        ClearExceptionLogs("UnhandledException");
+    }
+
+    private void ClearExceptionLogs(string prefix)
+    {
+        try
+        {
+            var files = Directory.GetFiles(Environment.CurrentDirectory + "\\" + logDir, prefix + "*.log");
+            foreach (var f in files)
+            {
+                long length = new System.IO.FileInfo(f).Length;
+                if (length < 5 && Regex.IsMatch(f, prefix + @"\d{1,10}\.log$"))
+                {
+                    File.Delete(f);
+                }
+            }
+        }
+        catch {}
     }
 
     private void Work(object count)
@@ -714,7 +833,7 @@ public class AMQPManager
     {
         ScheduleApplicationExit(true);
     }
-    
+
     private void HandleInput(ConsoleKeyInfo ki)
     {
         string keyChar = ki.KeyChar.ToString();
@@ -962,14 +1081,16 @@ public class AMQPManager
             cur_proc.Id
         ));
         output.AppendLine(string.Format(
-            "Config: workersCheckPeriod={0}s !amqpInitTimeout={1}s !axInitTimeout={2}s !axRequestTimeout={3}s startupWorkersCount={4} useClassPool={5}\n        methods config timestamp={6}",
-            workersCheckPeriod / 1000.0,
+            "Config [{0}]:\n workersCheckPeriod={1,2}s !amqpInitTimeout={2}s !axInitTimeout={3}s !axRequestTimeout={4}s startupWorkersCount={5} useClassPool={6}\n methods config timestamp={7}\n logDir=[{8}]",
+            Path.GetFullPath(configFile),
+            workersCheckPeriod / 1000.0 ,
             amqpInitTimeout / 1000.0,
             axconInitTimeout / 1000.0,
             axconRequestTimeout / 1000.0,
             startupWorkersCount,
             axconUseClassPool ? "yes" : "no",
-            AxCon.config["lastModified"].ToString("MM-dd HH:mm:ss")
+            AxCon.config["lastModified"].ToString("MM-dd HH:mm:ss"),
+            Path.GetFullPath(logDir)
         ));
         PrintToLog(output.ToString(), dtNow);
         output.AppendLine(string.Format(
@@ -1099,7 +1220,7 @@ public class AMQPManager
     {
         try
         {
-            Console.Title = this.GetType().Name;
+            Console.Title = System.Reflection.MethodBase.GetCurrentMethod().DeclaringType.Name;
             var a = Console.KeyAvailable;
             return true;
         }
@@ -1108,7 +1229,7 @@ public class AMQPManager
             return false;
         }
     }
-    
+
     private void SetConsoleSize(int w, int h)
     {
         if (w <= 0 || w > 200 || h <= 0 || h > 100) return;
@@ -1128,13 +1249,13 @@ public class AMQPManager
             {
                 dbg.fa(string.Format("WxH={0}x{1} {2}", w, h, e));
             }
-        }        
+        }
     }
-    
-    private static void ChDir()
+
+    private void ChDir()
     {
         String path = System.Reflection.Assembly.GetExecutingAssembly().CodeBase;
-        String directory = System.IO.Path.GetDirectoryName(path).Replace("file:\\", "");
+        String directory = Path.GetDirectoryName(path).Replace("file:\\", "");
         Environment.CurrentDirectory = directory;
     }
 }

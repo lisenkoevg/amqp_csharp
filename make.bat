@@ -16,11 +16,12 @@ if %userdomain% == 1810tz (
 
 set ref=/r:RabbitMQ.Client.dll /r:YamlDotNet.dll /r:fastjson.dll %AxaptaRef%
 
+set filelist=src\AMQP.cs src\AMQPManager.cs src\AxCon.cs src\ConfigLoader.cs src\Util.cs src\Logger.cs src\dbg.cs %AxaptaMock%
+
 :: for sending testing messages to RabbitMQ
 if exist testSend.exe del testSend.exe
 csc /nologo /main:TestSend testSend\testSend.cs %filelist% /lib:dll %ref%
 
-set filelist=src\AMQP.cs src\AMQPManager.cs src\AxCon.cs src\ConfigLoader.cs src\Util.cs src\Logger.cs src\dbg.cs %AxaptaMock%
 csc /nologo /out:AMQPManager.exe /main:AMQPManager %filelist% /lib:dll %define% %ref% /d:DEBUG && set buildSuccess=1
 
 if "%1" == "clearLog" del /s /q log\* >nul 2>&1
