@@ -53,7 +53,7 @@ public class AxCon
     private static int pid = Process.GetCurrentProcess().Id;
     public Stopwatch stopwatch = new Stopwatch();
     public bool isBusinessConnectorInstanceInvalid = false;
-    public event Action OnProcessCorruptedStateException;
+    public event Action<string> OnProcessCorruptedStateException;
     public static Logger logger = new Logger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType.Name);
 
     public AxCon(int workerId)
@@ -114,7 +114,7 @@ public class AxCon
         // catch (AlreadyLoggedOnException e)
         catch (AccessViolationException e)
         {
-            OnProcessCorruptedStateException();
+            OnProcessCorruptedStateException(e.GetType().Name);
             SetState(State.InitError);
             errorCount++;
             logger.Log(workerId, string.Format(
@@ -174,7 +174,7 @@ public class AxCon
         // catch (BusinessConnectorInstanceInvalid e)
         catch (AccessViolationException e)
         {
-            OnProcessCorruptedStateException();
+            OnProcessCorruptedStateException(e.GetType().Name);
             SetState(State.FinError);
             errorCount++;
             logger.Log(workerId, string.Format(
@@ -481,7 +481,7 @@ public class AxCon
             }
             catch (AccessViolationException e)
             {
-                OnProcessCorruptedStateException();
+                OnProcessCorruptedStateException(e.GetType().Name);
                 logger.Log(workerId, string.Format(
                     "{0} GetAxClass() ax_class_name={1}",
                     e.GetType(),
@@ -532,7 +532,7 @@ public class AxCon
         }
         catch (AccessViolationException e)
         {
-            OnProcessCorruptedStateException();
+            OnProcessCorruptedStateException(e.GetType().Name);
             logger.Log(workerId, string.Format(
                 "{0} ax_class_call() class={1} method={2} params={3}",
                 e.GetType(),

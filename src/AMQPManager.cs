@@ -9,29 +9,31 @@ using System.Diagnostics;
 using System.IO;
 using fastJSON;
 
-public class AMQPManager
+public partial class AMQPManager
 {
-    private static string[] cmdArgs;
-
+    public enum State {Running, UserStop, UserRestart, ErrorStop, SupervisorStop, Crash}
+    private State state = State.Running;
     private static string configFile = @"config\AMQPManager.yaml";
     public static string logDir = Path.GetDirectoryName(configFile) + "\\" + "..\\log";
-    private string cmdConfigFile;
-    private int maxWorkersCount = 30;
-    private int amqpInitTimeout = 15000;
-    private int axconInitTimeout = 30000;
-    private int axconRequestTimeout = 60000;
-    private int workersCheckPeriod = 15000;
-    private bool axconUseClassPool = false;
-    private int startupWorkersCount = 4;
+    public static int managersCount = 1;
+    private static string cmdConfigFile;
+    private static int maxWorkersCount = 30;
+    private static int amqpInitTimeout = 15000;
+    private static int axconInitTimeout = 30000;
+    private static int axconRequestTimeout = 60000;
+    private static int workersCheckPeriod = 15000;
+    private static bool axconUseClassPool = false;
+    private static int startupWorkersCount = 4;
 
-    private readonly Process cur_proc = Process.GetCurrentProcess();
+    private readonly Process currentProcess = Process.GetCurrentProcess();
+    private Process parentProcess;
     private readonly DateTime startTime = DateTime.Now;
-    private bool isConsoleAvailable;
+
     private Dictionary<int, AMQP> amqpDic = new Dictionary<int, AMQP>();
     private Dictionary<int, AxCon> axconDic = new Dictionary<int, AxCon>();
-    private Timer outputTimer;
-    private Timer inputTimer;
-    private Timer checkWorkersTimer;
+    private System.Threading.Timer outputTimer;
+    private System.Threading.Timer inputTimer;
+    private System.Threading.Timer checkWorkersTimer;
     private AutoResetEvent outputAutoResetEvent = new AutoResetEvent(false);
     private AutoResetEvent inputAutoResetEvent = new AutoResetEvent(false);
     private AutoResetEvent checkWorkersAutoResetEvent = new AutoResetEvent(true);
@@ -40,10 +42,8 @@ public class AMQPManager
     private int workersCount = 0;
     private bool outputPaused = false;
     private bool inputPaused = false;
-    private bool isWorkersRestarting = false;
     private bool exitScheduled = false;
     private bool restartScheduled = false;
-    private bool newInstanceSpawned = false;
     private bool isBusinessConnectorInstanceInvalid;
     private DateTime nextWorkersCheck = default(DateTime);
     private Dictionary<int,Dictionary<string,int>> workersStatistics = new Dictionary<int,Dictionary<string,int>>();
@@ -58,75 +58,18 @@ public class AMQPManager
     private int inputPollPeriod = 100;
     private int width = 0;
     private int height = 0;
-
-    public static void Main(string[] args)
-    {
-        cmdArgs = args;
-        if (GetArg("?") != null || GetArg("h") != null || GetArg("help") != null ||
-            (GetArg("newInstance") == null && GetArg("config") != null && cmdArgs.Length > 1) ||
-            (GetArg("newInstance") == null && GetArg("config") == null && cmdArgs.Length > 0)
-        )
-        {
-            ShowHelp();
-            return;
-        }
-        AMQPManager am = new AMQPManager();
-    }
-
-    private static string GetArg(string parameter)
-    {
-        string result = null;
-        for (int i = 0; i < cmdArgs.Length; i++)
-        {
-            var ar = cmdArgs[i].Split('=');
-            if (ar[0] == "-" + parameter || ar[0] == "/" + parameter)
-            {
-                result = (ar.Length > 1) ? ar[1].Trim() : "";
-                break;
-            }
-        }
-        return result;
-    }
-
-    private static void ShowHelp()
+    private Logger logger = new Logger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType.Name);
+    
+    public static void ShowHelp()
     {
         String exename = Path.GetFileName(System.Reflection.Assembly.GetExecutingAssembly().CodeBase).Replace("file:\\", "");
-        Console.WriteLine("Command-line options: {0} [-config=<path to config>]", exename);
-        Console.WriteLine("Default config \"{0}\"", configFile);
+        string msg = string.Format("Command-line options:\n{0} [-config=<path to config>]", exename);
+        msg += string.Format("\nDefault config \"{0}\"", configFile);
+        if (Supervisor.isConsoleAvailable)
+            Console.WriteLine(msg);
     }
 
-    public AMQPManager()
-    {
-        isConsoleAvailable = IsConsoleAvailable();
-        ChDir();
-        Configure();
-        PrepareLogDir();
-
-        if (GetArg("newInstance") == null)
-        {
-            SpawnNewInstance();
-            return;
-        }
-
-        var thrd = new Thread(Work);
-        thrd.Start(startupWorkersCount);
-
-        outputTimer = new Timer((obj) =>
-            {
-                if (!printAutoResetEvent.WaitOne(10))
-                    return;
-                if (!outputPaused)
-                {
-                    Print();
-                }
-                printAutoResetEvent.Set();
-            },
-            null, 0, updateScreenPeriod
-        );
-        outputAutoResetEvent.WaitOne();
-    }
-
-    private void Configure()
+    public static void Configure()
     {
         dynamic conf = LoadConfig();
         if (conf == null)
@@ -135,6 +78,13 @@ public class AMQPManager
         if (conf.ContainsKey("maxWorkersCount") && Int32.TryParse(conf["maxWorkersCount"], out parsedValue))
         {
             maxWorkersCount = parsedValue;
+        }
+        if (conf.ContainsKey("managersCount") && Int32.TryParse(conf["managersCount"], out parsedValue))
+        {
+            if (parsedValue > 0 && parsedValue < 30)
+            {
+                managersCount = parsedValue;
+            }
         }
         if (conf.ContainsKey("startupWorkersCount") && Int32.TryParse(conf["startupWorkersCount"], out parsedValue))
         {
@@ -169,10 +119,10 @@ public class AMQPManager
         }
     }
 
-    private object LoadConfig()
+    public static object LoadConfig()
     {
         object result = null;
-        cmdConfigFile = GetArg("config");
+        cmdConfigFile = Supervisor.GetArg("config");
         if (cmdConfigFile != null)
         {
             configFile = cmdConfigFile;
@@ -204,7 +154,7 @@ public class AMQPManager
         return result;
     }
 
-    private void CreateConfigFile()
+    public static void CreateConfigFile()
     {
         try
         {
@@ -216,6 +166,7 @@ public class AMQPManager
                 sw.WriteLine("axconInitTimeout: {0}", axconInitTimeout);
                 sw.WriteLine("axconRequestTimeout: {0}", axconRequestTimeout);
                 sw.WriteLine("startupWorkersCount: {0}", startupWorkersCount);
+                sw.WriteLine("managersCount: {0}", managersCount);
                 sw.WriteLine("maxWorkersCount: {0}", maxWorkersCount);
                 sw.WriteLine("# 1/0");
                 sw.WriteLine("axconUseClassPool: {0}", axconUseClassPool ? "1" : "0");
@@ -230,7 +181,7 @@ public class AMQPManager
         }
     }
 
-    private void PrepareLogDir()
+    public static void PrepareLogDir()
     {
         string testFile = logDir + "\\" + Path.GetRandomFileName();
         try
@@ -252,9 +203,47 @@ public class AMQPManager
         }
     }
 
-    private void SpawnNewInstance(bool redirectError = true)
+    public AMQPManager()
     {
-        newInstanceSpawned = true;
+        string parentPID = Supervisor.GetArg("parentPID");
+        try
+        {
+            parentProcess = Process.GetProcessById(Convert.ToInt32(parentPID));
+        }
+        catch (Exception e)
+        {
+            string msg = string.Format("Get parent process error parentPID={0}\n{1}", parentPID, e);
+            infoMsg += msg;
+            logger.Log(msg);
+        }
+        if (Supervisor.isConsoleAvailable)
+        {
+            Console.Title = System.Reflection.MethodBase.GetCurrentMethod().DeclaringType.Name;
+            Console.CancelKeyPress += new ConsoleCancelEventHandler(OnConsoleCancel);
+        }
+        StartPipeClient();
+        var thrd = new Thread(Work);
+        thrd.Start(startupWorkersCount);
+
+        outputTimer = new System.Threading.Timer((obj) =>
+            {
+                if (!printAutoResetEvent.WaitOne(10))
+                    return;
+                if (!outputPaused)
+                {
+                    Print();
+                }
+                printAutoResetEvent.Set();
+            },
+            null, 0, updateScreenPeriod
+        );
+        outputAutoResetEvent.WaitOne();
+        StopPipeClient();
+    }
+
+    public static Process SpawnNewInstance(int id, int parentProcessId, string exeName, bool redirectError = true)
+    {
+        Process result;
         string prefix = "Exception";
         var psi = new ProcessStartInfo();
         psi.FileName = "cmd.exe";
@@ -264,40 +253,41 @@ public class AMQPManager
             config = cmdConfigFile.IndexOf(' ') != -1 ? "\"" + cmdConfigFile + "\"" : cmdConfigFile;
             config = " -config=" + config;
         }
-        psi.Arguments = string.Format("/c {0}{1} -newInstance", cur_proc.MainModule.FileName, config);
+        psi.Arguments = string.Format("/c {0}{1} -parentPID={2}", exeName, config, parentProcessId);
         if (redirectError)
         {
-            psi.Arguments += string.Format(" 2>>\"{0}\\{1}{2}.log\"", logDir, prefix, cur_proc.Id);
+            psi.Arguments += string.Format(" 2>>\"{0}\\{1}{2}.log\"", logDir, prefix, id);
         }
-        Process.Start(psi);
-        ClearExceptionLogs(prefix);
-        ClearExceptionLogs("UnhandledException");
+        result = Process.Start(psi);
+        result = Supervisor.WaitForChildProcess(result.Id, Path.GetFileName(exeName));
+        ClearEmptyExceptionLogs(prefix);
+        ClearEmptyExceptionLogs("UnhandledException");
+        return result;
     }
-
-    private void ClearExceptionLogs(string prefix)
+    
+    private static void ClearEmptyExceptionLogs(string prefix)
     {
-        try
+        string[] files = new string[0];
+        try { files = Directory.GetFiles(Environment.CurrentDirectory + "\\" + logDir, prefix + "*.log"); } catch {}
+        foreach (var f in files)
         {
-            var files = Directory.GetFiles(Environment.CurrentDirectory + "\\" + logDir, prefix + "*.log");
-            foreach (var f in files)
+            try
             {
                 long length = new System.IO.FileInfo(f).Length;
                 if (length < 5 && Regex.IsMatch(f, prefix + @"\d{1,10}\.log$"))
-                {
                     File.Delete(f);
-                }
             }
+            catch {}
         }
-        catch {}
     }
 
     private void Work(object count)
     {
         CreateWorkers((int)count);
         CheckWorkers();
-        int secondCheckTimeout = 10000;
+        int secondCheckTimeout = 7000;
         nextWorkersCheck = DateTime.Now.AddMilliseconds(secondCheckTimeout);
-        checkWorkersTimer = new Timer(
+        checkWorkersTimer = new System.Threading.Timer(
             (obj) => {
                 checkWorkersAutoResetEvent.WaitOne();
                 nextWorkersCheck = default(DateTime);
@@ -309,9 +299,9 @@ public class AMQPManager
             secondCheckTimeout,
             workersCheckPeriod
         );
-        inputTimer = new Timer(
+        inputTimer = new System.Threading.Timer(
             (obj) => {
-                if (isConsoleAvailable && Console.KeyAvailable) {
+                if (Supervisor.isConsoleAvailable && Console.KeyAvailable) {
                     ConsoleKeyInfo ki = Console.ReadKey(outputPaused || inputPaused);
                     if (!inputPaused)
                         HandleInput(ki);
@@ -378,11 +368,15 @@ public class AMQPManager
         }
         if (isBusinessConnectorInstanceInvalid && list.Count > 0)
         {
-            ScheduleApplicationRestart();
+            if (state != State.ErrorStop)
+            {
+                state = State.ErrorStop;
+                ScheduleApplicationRestart("BusinessConnectorInstanceInvalid");
+            }
         }
-        if (restartScheduled && !newInstanceSpawned)
+        if (parentProcess == null || parentProcess.HasExited)
         {
-            SpawnNewInstance();
+            ScheduleApplicationExit();
         }
     }
 
@@ -742,26 +736,6 @@ public class AMQPManager
         }
     }
 
-    private void RestartRunningWorkers()
-    {
-        if (isWorkersRestarting) return;
-        isWorkersRestarting = true;
-        int currentWorkersCount = GetRunningWorkersCount();
-        lock (lockOn)
-        {
-            foreach (var amqp in amqpDic.Values)
-            {
-                var state = amqp.GetState();
-                if (state == AMQP.State.Running || state == AMQP.State.Paused)
-                {
-                    StopWorkerById(amqp.workerId);
-                }
-            }
-        }
-        CreateWorkers(currentWorkersCount);
-        isWorkersRestarting = false;
-    }
-
     private void TogglePausedForAllWorkers()
     {
         lock (lockOn)
@@ -817,8 +791,14 @@ public class AMQPManager
         }
         return result;
     }
-
-    private void ScheduleApplicationExit(bool restart = false)
+    
+    private void UserScheduleApplicationExit(bool restart = false, string descr = "")
+    {
+        this.state = restart ? State.UserRestart : State.UserStop;
+        ScheduleApplicationExit(restart, descr);
+    }
+    
+    private void ScheduleApplicationExit(bool restart = false, string descr = "")
     {
         if (!exitScheduled)
         {
@@ -826,12 +806,13 @@ public class AMQPManager
             restartScheduled = restart;
             workersCheckPeriod = 2000;
             checkWorkersTimer.Change(0, workersCheckPeriod);
+            PushOwnState(descr);
         }
     }
 
-    private void ScheduleApplicationRestart()
+    private void ScheduleApplicationRestart(string descr = "")
     {
-        ScheduleApplicationExit(true);
+        ScheduleApplicationExit(true, descr);
     }
 
     private void HandleInput(ConsoleKeyInfo ki)
@@ -918,8 +899,7 @@ public class AMQPManager
                     StopWorker();
                     break;
                 case "R":
-                    // RestartRunningWorkers();
-                    ScheduleApplicationRestart();
+                    UserScheduleApplicationExit(restart: true);
                     break;
                 case "F":
                     checkWorkersTimer.Change(0, workersCheckPeriod);
@@ -928,7 +908,7 @@ public class AMQPManager
                     TogglePausedForAllWorkers();
                     break;
                 case "Q":
-                    ScheduleApplicationExit();
+                    UserScheduleApplicationExit();
                     break;
                 case "RC":
                     infoMsg = AxCon.LoadConfig();
@@ -1078,7 +1058,7 @@ public class AMQPManager
             total["axRequestTimedOutCount"],
             AMQP.queue,
             AMQP.msgInQueue,
-            cur_proc.Id
+            currentProcess.Id
         ));
         output.AppendLine(string.Format(
             "Config [{0}]:\n workersCheckPeriod={1,2}s !amqpInitTimeout={2}s !axInitTimeout={3}s !axRequestTimeout={4}s startupWorkersCount={5} useClassPool={6}\n methods config timestamp={7}\n logDir=[{8}]",
@@ -1092,29 +1072,30 @@ public class AMQPManager
             AxCon.config["lastModified"].ToString("MM-dd HH:mm:ss"),
             Path.GetFullPath(logDir)
         ));
-        PrintToLog(output.ToString(), dtNow);
+        PrintToLog(output.ToString() + "\n" + infoMsg, dtNow);
         output.AppendLine(string.Format(
-            "Screen update period: {0}s running: {1:d\\.hh\\:mm\\:ss} heap={2:0.0}MB", //private={3:0.0}MB threads={4}
+            "Screen update period: {0}s running: {1:d\\.hh\\:mm\\:ss} heap={2:0.0}MB state={3}", //private={3:0.0}MB threads={4}
             System.Math.Round(updateScreenPeriod / 1000.0, 1),
             (dtNow - startTime),
-            System.Math.Round(Convert.ToSingle(GC.GetTotalMemory(false)) / 1024 / 1024, 1)
-            // System.Math.Round(Convert.ToSingle(cur_proc.PrivateMemorySize64) / 1024 / 1024, 1)
-            // cur_proc.Threads.Count
+            System.Math.Round(Convert.ToSingle(GC.GetTotalMemory(false)) / 1024 / 1024, 1),
+            state
+            // System.Math.Round(Convert.ToSingle(currentProcess.PrivateMemorySize64) / 1024 / 1024, 1)
+            // currentProcess.Threads.Count
         ));
         output.AppendLine("\n?: a: start new worker, d - stop one running worker, <id>d: stop worker by <id>");
         output.AppendLine("?: Ctrl-R: restart, Ctrl-Q: stop and exit");
         output.AppendLine("?: <id>p: pause/resume worker by <id>, Ctrl-p: pause/resume all running workers");
         output.AppendLine(string.Format(
-            "?: f: force workers check{0}, rc: reload methods config",
-            nextWorkersCheck != default(DateTime) ? " (" + (nextWorkersCheck - dtNow).TotalSeconds.ToString("0") + ")": ""
+            "?: f: force workers check {0,2}, rc: reload methods config",
+            nextWorkersCheck != default(DateTime) ? (nextWorkersCheck - dtNow).TotalSeconds.ToString("0"): ""
         ));
-        output.AppendLine("Space: pause screen update, Ctrl-C: force exit");
+        output.AppendLine("Space: pause screen update, Ctrl-C - force exit");
         if (infoMsg != "")
         {
-            output.AppendLine(string.Format("{0}", "".PadLeft(head.Length, '=')));
+            output.AppendLine(string.Format("{0}", "".PadLeft(head.Length - 50, '=')));
             output.AppendLine(infoMsg);
         }
-        if (isConsoleAvailable)
+        if (Supervisor.isConsoleAvailable)
         {
             if (Monitor.TryEnter(lockOn, 200))
             {
@@ -1202,7 +1183,7 @@ public class AMQPManager
     {
         if (s != lastPrint && dtNow.Second % 2 == 0 && dtNow.Millisecond < 500)
         {
-            string fileName = cur_proc.Id + "_" + dtNow.ToString("yyyyMMdd_HHmmss") + ".log";
+            string fileName = currentProcess.Id + "_" + dtNow.ToString("yyyyMMdd_HHmmss") + ".log";
             try
             {
                 Directory.CreateDirectory(logDir + "\\print");
@@ -1215,21 +1196,13 @@ public class AMQPManager
             catch {}
         }
     }
-
-    private bool IsConsoleAvailable()
+    
+    public void OnConsoleCancel(object sender, ConsoleCancelEventArgs args)
     {
-        try
-        {
-            Console.Title = System.Reflection.MethodBase.GetCurrentMethod().DeclaringType.Name;
-            var a = Console.KeyAvailable;
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
+        if (!exitScheduled) args.Cancel = true;
+        UserScheduleApplicationExit();
     }
-
+    
     private void SetConsoleSize(int w, int h)
     {
         if (w <= 0 || w > 200 || h <= 0 || h > 100) return;
@@ -1247,15 +1220,8 @@ public class AMQPManager
             }
             catch (Exception e)
             {
-                dbg.fa(string.Format("WxH={0}x{1} {2}", w, h, e));
+                dbg.fa(string.Format("WxH={0}x{1} {2}", w, h, e.Message));
             }
         }
-    }
-
-    private void ChDir()
-    {
-        String path = System.Reflection.Assembly.GetExecutingAssembly().CodeBase;
-        String directory = Path.GetDirectoryName(path).Replace("file:\\", "");
-        Environment.CurrentDirectory = directory;
     }
 }

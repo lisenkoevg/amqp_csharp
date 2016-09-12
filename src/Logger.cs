@@ -21,6 +21,11 @@ public class Logger
         Log_(workerId, obj, fileSuffix, includeWorkerIdToFileName, false);
     }
     
+    public void Log(object obj, string fileSuffix = "", bool includeWorkerIdToFileName = false)
+    {
+        Log_(-1, obj, fileSuffix, includeWorkerIdToFileName, false);
+    }
+    
     public void LogInJSON(int workerId, object obj, string fileSuffix = "", bool includeWorkerIdToFileName = false)
     {
         Log_(workerId, obj, fileSuffix, includeWorkerIdToFileName, true);
@@ -78,12 +83,21 @@ public class Logger
                     try { msg += "\nerror['message']=" + dynObj["error"]["message"]; } catch {}
                 }
             }
+            string s;
+            if (workerId > 0)
+                s = string.Format("{0};pid={1};wid={2,2};{3}", timestamp, pid, workerId, msg);
+            else
+                s = string.Format("{0};pid={1};{2}", timestamp, pid, msg);
             using (StreamWriter writer = new StreamWriter(dir + "\\" + file_name, true))
             {
-                writer.WriteLine("{0};pid={1};wid={2,2};{3}", timestamp, pid, workerId, msg);
+                writer.WriteLine(s);
             }
+            if ((baseName == "pipe" || baseName == "Supervisor") && Supervisor.IsConsoleAvailable())
+                Console.WriteLine(s);
             success = true;
         }
+        catch
+        {}
         finally
         {
             if (!includeWorkerIdToFileName)

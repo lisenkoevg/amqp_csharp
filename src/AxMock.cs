@@ -15,7 +15,7 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         public Axapta()
         {
             methods_config = AxCon.config["methods"];
-            Axapta.isThrowExceptions = true;
+            Axapta.isThrowExceptions = false;
         }
 
         public bool Logon(string str1, string str2, string str3, string str4)
@@ -26,7 +26,7 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
             {
                 throw new Exception("Logon exception");
             }
-            if (Axapta.rnd(0, 10) == 0)
+            if (Axapta.isThrowExceptions && Axapta.rnd(0, 10) == 0)
             {
                 AxaptaObject.GenerateAccessViolationException();
             }
@@ -39,7 +39,7 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
             {
                 throw new Exception("Logoff exception");
             }
-            if (Axapta.rnd(0, 10) == 0)
+            if (Axapta.isThrowExceptions && Axapta.rnd(0, 10) == 0)
             {
                 AxaptaObject.GenerateAccessViolationException();
             }
@@ -81,7 +81,7 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
                 }
             }
             int k = Axapta.rnd(0, 500);
-            if (k == 0)
+            if (Axapta.isThrowExceptions && k == 0)
             {
                 GenerateAccessViolationException();
             }
