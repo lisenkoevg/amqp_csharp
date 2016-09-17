@@ -152,16 +152,15 @@ public partial class Supervisor
     {
         if (isConsoleAvailable)
         {
-            Console.WriteLine("Press Ctrl-C to stop");
+            Console.WriteLine("Press Ctrl-C to stop, Ctrl-C,Ctrl-C to force exit");
             Console.CancelKeyPress += OnConsoleCancel;
             SetConsoleSize();
         }
         logger.Log(string.Format("Start Supervisor pid={0}", currentProcess.Id));
         StartPipeServer();
         StartManagers();
-        checkTimer = new Timer((obj) => {
-            CheckManagers();
-        }, null, 1000, managerCheckPeriod);
+        checkTimer = new Timer((obj) => { CheckManagers(); });
+        checkTimer.Change(1000, managerCheckPeriod);
         mainEvent.WaitOne();
         StopPipeServer();
         logger.Log(string.Format("Stop Supervisor pid={0}", currentProcess.Id));
@@ -220,6 +219,7 @@ public partial class Supervisor
         }
         else
         {
+            SendStopManager();
             if (procList.Count == 0)
             {
                 mainEvent.Set();
@@ -233,7 +233,7 @@ public partial class Supervisor
         if (runningManagersPids.Count != AMQPManager.managersCount)
         {
             logger.Log(string.Format(
-                "ProtectiveCheck runningManagersPids={0}, managersCount={1}",
+                "ProtectiveCheck runningManagersCount={0}, managersCount={1}",
                 runningManagersPids.Count,
                 AMQPManager.managersCount
             ));
@@ -272,9 +272,12 @@ public partial class Supervisor
 
     private void OnConsoleCancel(object sender, ConsoleCancelEventArgs args)
     {
-        if (!exitScheduled) args.Cancel = true;
-        SendStopManager();
-        ScheduleExit();
+        if (!exitScheduled)
+        {
+            ScheduleExit();
+            args.Cancel = true;
+            Console.WriteLine("Exiting...");
+        }
     }
 
     private void SetConsoleSize()

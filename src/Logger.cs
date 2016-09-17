@@ -92,7 +92,7 @@ public class Logger
             {
                 writer.WriteLine(s);
             }
-            if ((baseName == "pipe" || baseName == "Supervisor") && Supervisor.IsConsoleAvailable())
+            if ((baseName == "Supervisor") && Supervisor.IsConsoleAvailable())
                 Console.WriteLine(s);
             success = true;
         }

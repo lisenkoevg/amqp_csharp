@@ -49,6 +49,10 @@ namespace Microsoft.Dynamics.BusinessConnectorNet {
         {
             return new AxaptaObject(objName);
         }
+        public object CallStaticClassMethod(string s1, string s2, object input)
+        {
+            return input;
+        }
         public void Dispose()
         {}
     }

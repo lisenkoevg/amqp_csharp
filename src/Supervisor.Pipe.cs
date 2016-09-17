@@ -26,14 +26,18 @@ public partial class Supervisor
     {
         pipeLogger.Log(string.Format("Pipe: OnClientMessage {0}", message));
         procList[message.pid].state = message.state;
-        if (message.state == AMQPManager.State.UserRestart)
+        if (message.state == AMQPManager.State.UserRestart || message.state == AMQPManager.State.ErrorStop)
         {
+            checkEvent.WaitOne(1000);
             StartManager();
+            checkEvent.Set();
         }
         if (message.state == AMQPManager.State.UserStop)
         {
             SendStopManager();
             ScheduleExit();
+            if (isConsoleAvailable)
+                Console.WriteLine("Exiting...");
         }
     }
     
@@ -58,7 +62,15 @@ public partial class Supervisor
             state = AMQPManager.State.SupervisorStop,
             pid = processId
         };
-        pipeLogger.Log(string.Format("Pipe: {0}.StopManager() message={1}", this.GetType().Name, message.ToString()));
-        pipeServer.PushMessage(message);
+        string s = string.Format("Pipe: {0}.StopManager() message={1}", this.GetType().Name, message.ToString());
+        try
+        {
+            pipeServer.PushMessage(message);
+        }
+        catch (Exception e)
+        {
+            s += "\n" + e.ToString();
+        }
+        pipeLogger.Log(s);
     }
 }

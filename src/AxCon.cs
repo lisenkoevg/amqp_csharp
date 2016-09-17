@@ -8,6 +8,7 @@ using Microsoft.Dynamics.BusinessConnectorNet;
 using fastJSON;
 using System.Diagnostics;
 using System.Threading;
+using System.Threading.Tasks;
 
 class AxWarning : Exception
 {
@@ -38,6 +39,10 @@ public class AxCon
     private bool asyncInitTimedOut = false;
     private bool asyncRequestTimedOut = false;
     public DateTime lastRequestStarttime;
+    public ManualResetEvent keepAliveManualResetEvent = new ManualResetEvent(true);
+    private static readonly int keepAlivePeriod = 300000;
+    private static readonly int keepAliveRequestTimeout = 5000;
+    private Timer keepAliveTimer;
     public TimeSpan longestMethodDuration = new TimeSpan();
     public string lastMethod = "";
     public string longestMethod = "";
@@ -60,6 +65,7 @@ public class AxCon
     {
         this.workerId = workerId;
         ax = new Axapta();
+        keepAliveTimer = new Timer((obj) => { KeepAlive(); });
     }
 
     static AxCon()
@@ -100,6 +106,7 @@ public class AxCon
         {
             SetState(State.Login);
             Logon();
+            keepAliveTimer.Change(keepAlivePeriod, keepAlivePeriod);
             lock (lockOn)
             {
                 if (!GetAsyncInitTimedOut())
@@ -155,7 +162,11 @@ public class AxCon
         try
         {
             SetState(State.Logoff);
-            Logoff();
+            if (!isBusinessConnectorInstanceInvalid)
+            {
+                Logoff();
+                keepAliveTimer.Change(Timeout.Infinite, Timeout.Infinite);
+            }
             lock (lockOn)
             {
                 if (!GetAsyncInitTimedOut())
@@ -453,6 +464,7 @@ public class AxCon
             logFileSuffix
         );
     }
+    
     public Dictionary<string,dynamic> GetInfo()
     {
         return new Dictionary<string,object>() {
@@ -466,6 +478,50 @@ public class AxCon
             {"longestMethodDuration", longestMethodDuration},
             {"poolCount", axClassPool.Count}
         };
+    }
+    
+    [System.Runtime.ExceptionServices.HandleProcessCorruptedStateExceptions]
+    [System.Security.SecurityCritical]
+    public void KeepAlive()
+    {
+        if (state != State.Ready) return;
+        keepAliveManualResetEvent.WaitOne();
+        keepAliveManualResetEvent.Reset();
+        bool needSend = lastRequestStarttime == null || lastRequestStarttime.AddMilliseconds(keepAlivePeriod) < DateTime.Now;
+        if (!needSend)
+        {
+            keepAliveManualResetEvent.Set();
+            return;
+        }
+        try
+        {
+            string testMessage = "keepAliveString";
+            Task<string> t = Task.Factory.StartNew(() =>
+                {
+                    return (string)ax.CallStaticClassMethod("cmpConnectorInbound", "echo", (object)testMessage);
+                });
+            bool waitSuccess = t.Wait(keepAliveRequestTimeout);
+            if (waitSuccess)
+            {
+                string result = t.Result;
+                logger.Log(workerId, string.Format("result={0}", testMessage == result), "keepAlive");
+            }
+            else
+            {
+                logger.Log(workerId, string.Format("timeout"), "keepAlive");
+            }
+        }
+        catch (Exception e)
+        {
+            var eAggregateException = e as AggregateException;
+            if (eAggregateException != null && eAggregateException.InnerException is BusinessConnectorInstanceInvalid)
+                isBusinessConnectorInstanceInvalid = true;
+            logger.Log(workerId, e, "keepAlive");
+        }
+        finally
+        {
+            keepAliveManualResetEvent.Set();
+        }
     }
     
     [System.Runtime.ExceptionServices.HandleProcessCorruptedStateExceptions]

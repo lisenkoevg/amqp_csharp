@@ -51,8 +51,9 @@ public class dbg
     
     public static void fa(Object obj)
     {
-        string dir = AMQPManager.logDir;
-        string fileName = dir + "/debug.log";
+        DateTime dtNow = DateTime.Now;
+        string dir = AMQPManager.logDir + "\\" + dtNow.ToString("yyyyMMdd");
+        string fileName = dir + "\\debug.log";
         lock (lock_on)
         {
             try
@@ -61,7 +62,7 @@ public class dbg
                 if (File.Exists(fileName) && new FileInfo(fileName).Length > 1000000)
                 {
                     try {
-                        File.Move(fileName, dir + "/debug" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".log");
+                        File.Move(fileName, dir + "\\debug" + dtNow.ToString("yyyyMMdd_HHmmss") + ".log");
                     }
                     catch {}
                 }

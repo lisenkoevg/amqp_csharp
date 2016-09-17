@@ -19,17 +19,23 @@ public partial class AMQPManager
         pipeClient.Stop();
     }
     
-    private void PushOwnState(string descr)
+    private void SendOwnStateToSupervisor(string descr)
     {
-        var msg = new PipeMessage() {
+        var message = new PipeMessage() {
             pid = currentProcess.Id,
             state = this.state,
             description = descr
         };
-        string s = string.Format("Pipe: AMQPManager.PushOwnState() {0}", msg.ToString());
-        logger.Log(s);
-        infoMsg += s + "\n";
-        pipeClient.PushMessage(msg);
+        string s = string.Format("Pipe: AMQPManager.SendOwnStateToSupervisor() {0}", message.ToString());
+        try
+        {
+            pipeClient.PushMessage(message);
+        }
+        catch (Exception e)
+        {
+            s += "\n" + e.ToString();
+        }
+        Supervisor.pipeLogger.Log(s);
     }
     
     private void OnServerMessage(NamedPipeConnection<PipeMessage,PipeMessage> connection, PipeMessage message)
@@ -37,15 +43,14 @@ public partial class AMQPManager
         if (message.pid == currentProcess.Id || message.pid == 0)
         {
             string s = string.Format("Pipe: OnServerMessage connection.id={0} message={1}", connection.Id, message.ToString());
-            logger.Log(s);
-            infoMsg += s + "\n";
+            Supervisor.pipeLogger.Log(s);
             if (state == State.Running && state != message.state)
             {
                 state = message.state;
             }
             if (state == State.SupervisorStop)
             {
-                ScheduleApplicationExit(restart: false);
+                ScheduleApplicationExit();
             }
         }
     }
