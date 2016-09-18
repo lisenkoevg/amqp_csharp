@@ -14,9 +14,9 @@ if %userdomain% == 1810tz (
     set define=
 )
 
-set ref=/r:RabbitMQ.Client.dll /r:YamlDotNet.dll /r:fastjson.dll /r:NamedPipeWrapper.dll %AxaptaRef%
+set ref=/r:RabbitMQ.Client.dll /r:YamlDotNet.dll /r:fastjson.dll /r:NamedPipeWrapper.dll /r:Topshelf.dll %AxaptaRef%
 
-set filelist=src\AMQP.cs src\AMQPManager.cs src\AxCon.cs src\ConfigLoader.cs src\Util.cs src\Logger.cs src\dbg.cs src\Supervisor.cs src\AMQPManager.Pipe.cs src\Supervisor.Pipe.cs src\PipeMessage.cs %AxaptaMock%
+set filelist=src\AMQP.cs src\AMQPManager.cs src\AMQPManager.CmdInterface.cs src\AMQPManager.Configure.cs src\AxCon.cs src\ConfigLoader.cs src\Util.cs src\Logger.cs src\dbg.cs src\Supervisor.cs src\Supervisor.Service.cs src\AMQPManager.Pipe.cs src\Supervisor.Pipe.cs src\PipeMessage.cs %AxaptaMock%
 
 :: for sending testing messages to RabbitMQ
 :: if exist testSend.exe del testSend.exe

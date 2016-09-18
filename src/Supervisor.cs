@@ -18,13 +18,14 @@ public partial class Supervisor
 
     private int managerCheckPeriod = 5000;
     private static int exceptionLogSuffix = 1;
-    private Timer checkTimer;
+    private static Timer checkTimer;
     private AutoResetEvent mainEvent = new AutoResetEvent(false);
     private AutoResetEvent checkEvent = new AutoResetEvent(true);
-    private bool exitScheduled = false;
+    private static bool exitScheduled = false;
     public static Logger logger = new Logger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType.Name);
     public static bool isConsoleAvailable = IsConsoleAvailable();
-
+    private static bool isServiceMode = false;
+    
     private class AMQPManagerProcessWrapper
     {
         public Process process;
@@ -47,28 +48,60 @@ public partial class Supervisor
     public static void Main(string[] args)
     {
         cmdArgs = args;
-        ChDir();
+        Configure();
 
-        ArgsToDic();
-        var list = cmdArgsDic.Keys.ToList();
-        list.Remove("config");
-        list.Remove("parentPID");
-        if (list.Count > 0)
-        {
-            AMQPManager.ShowHelp();
-            return;
-        }
-        AMQPManager.Configure();
-        AMQPManager.PrepareLogDir();
-
-        if (GetArg("parentPID") == null)
-        {
-            Supervisor s = new Supervisor();
-        }
-        else
+        if (GetArg("parentPID") != null)
         {
             AMQPManager am = new AMQPManager();
         }
+        else
+        {
+            if (isServiceMode)
+            {
+                SetupService();
+            }
+            else
+            {
+                Supervisor s = new Supervisor();
+            }
+        }
+    }
+
+    public static void Configure()
+    {
+        ChDir();
+        AMQPManager.Configure();
+        AMQPManager.PrepareLogDir();
+        HandleCommandLine();
+    }
+
+    public static void HandleCommandLine()
+    {
+        if (GetArg("?") != null)
+        {
+            ShowHelp();
+            Environment.Exit(0);
+        }
+        if (!Environment.UserInteractive
+            || GetArg("help") != null
+            || GetArg("run") != null
+            || GetArg("install") != null
+            || GetArg("uninstall") != null
+            || GetArg("start") != null
+            || GetArg("stop") != null)
+        {
+            isServiceMode = true;
+        }
+    }
+
+    public static void ShowHelp()
+    {
+        String exename = Path.GetFileName(System.Reflection.Assembly.GetExecutingAssembly().CodeBase).Replace("file:\\", "");
+        string msg = string.Format("Command-line options:\n{0} [-config:<path to config>] | help | ...", exename);
+        msg += string.Format("\nDefault config \"{0}\"", AMQPManager.configFile);
+        msg += string.Format("\nhelp - help about working with service");
+        if (Supervisor.isConsoleAvailable)
+            Console.WriteLine(msg);
     }
 
     public static string GetArg(string parameter)
@@ -76,8 +109,8 @@ public partial class Supervisor
         string result = null;
         for (int i = 0; i < cmdArgs.Length; i++)
         {
-            var ar = cmdArgs[i].Split('=');
-            if (ar[0] == parameter || ar[0] == "-" + parameter || ar[0] == "/" + parameter)
+            var ar = cmdArgs[i].Split(':');
+            if (ar[0] == parameter || ar[0] == "-" + parameter || ar[0] == "--" + parameter || ar[0] == "/" + parameter)
             {
                 result = (ar.Length > 1) ? ar[1].Trim() : "";
                 break;
@@ -90,9 +123,9 @@ public partial class Supervisor
     {
         for (int i = 0; i < cmdArgs.Length; i++)
         {
-            var ar = cmdArgs[i].Split('=');
+            var ar = cmdArgs[i].Split(':');
             string parameter = ar[0];
-            parameter = Regex.Replace(parameter, "^(\\-|/)", "");
+            parameter = Regex.Replace(parameter, "^(\\-\\-|\\-|/)", "");
             string value = (ar.Length > 1) ? ar[1].Trim() : "";
             cmdArgsDic[parameter] = value;
         }
@@ -150,22 +183,33 @@ public partial class Supervisor
 
     public Supervisor()
     {
+        if (isServiceMode) return;        
         if (isConsoleAvailable)
         {
-            Console.WriteLine("Press Ctrl-C to stop, Ctrl-C,Ctrl-C to force exit");
+            Console.WriteLine("Running in command-line mode. Press Ctrl-C to stop");
             Console.CancelKeyPress += OnConsoleCancel;
             SetConsoleSize();
         }
+        Work();
+        WaitExit();
+    }
+
+    private void Work()
+    {
         logger.Log(string.Format("Start Supervisor pid={0}", currentProcess.Id));
         StartPipeServer();
         StartManagers();
         checkTimer = new Timer((obj) => { CheckManagers(); });
         checkTimer.Change(1000, managerCheckPeriod);
+    }
+    
+    private void WaitExit()
+    {
         mainEvent.WaitOne();
         StopPipeServer();
         logger.Log(string.Format("Stop Supervisor pid={0}", currentProcess.Id));
     }
-
+    
     private void StartManagers()
     {
         for (int i = 0; i < AMQPManager.managersCount; i++)
@@ -248,12 +292,12 @@ public partial class Supervisor
         }
     }
 
-    private void ScheduleExit()
+    public static void ScheduleExit()
     {
         if (!exitScheduled)
         {
             exitScheduled = true;
-            checkTimer.Change(0, 1000);
+            if (checkTimer != null) checkTimer.Change(0, 1000);
         }
     }
 
@@ -285,7 +329,7 @@ public partial class Supervisor
         try
         {
             Console.SetWindowSize(120, 10);
-            Console.SetBufferSize(120, 1000);
+            Console.SetBufferSize(120, 9999);
         }
         catch {}
     }
