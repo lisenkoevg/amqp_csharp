@@ -17,6 +17,10 @@ public partial class Supervisor
                s.WhenStopped(tc => tc.Stop());
             });
             x.SetServiceName(serviceName);
+            x.EnableServiceRecovery(r => {
+                r.RestartService(0);
+                r.SetResetPeriod(1);
+            });
         });
     }
         
