@@ -267,7 +267,7 @@ public class AxCon
 
     private void Logon()
     {
-        ax.Logon("rba", "ru", "192.168.3.120:2714", "");
+        ax.Logon("rba", "ru", AMQP.settings["axapta"]["host"], "");
     }
 
     private void Logoff()

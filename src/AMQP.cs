@@ -24,7 +24,7 @@ public class AMQP
     public event AxExecuteRequestHandler OnAxExecuteRequest;
     public static uint msgInQueue;
     private bool asyncInitTimedOut = false;
-    private static Dictionary<string,dynamic> settings;
+    public static Dictionary<string,dynamic> settings;
     public static String queue;
     private State state = State.Init;
     private bool isProcessing = false;
