@@ -90,9 +90,14 @@ public static class Util
         return result;
     }
 
-    public static string CutUserHash(string s)
+    public static string CutUserHash(string s, bool process = false)
     {
-        return Regex.Replace(s, "(user_hash(?:[^0-9,a-f]{3,10})[0-9,a-f]{10})([0-9,a-f]{22})", "$1*", RegexOptions.IgnoreCase);
+        string result = s;
+        if (process)
+        {
+            result = Regex.Replace(s, "(user_hash(?:[^0-9,a-f]{3,10})[0-9,a-f]{10})([0-9,a-f]{22})", "$1*", RegexOptions.IgnoreCase);
+        }
+        return result;
     }
     
     public static string ToJSON(object obj)
