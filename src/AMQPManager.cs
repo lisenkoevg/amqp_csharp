@@ -27,6 +27,7 @@ public partial class AMQPManager
     private int workersCount = 0;
     private bool exitScheduled = false;
     private bool isBusinessConnectorInstanceInvalid;
+    private int initErrorCounter;
     private DateTime nextWorkersCheck = default(DateTime);
     private Task asyncTaskChainHead = new Task(()=>{});
     private Task asyncTaskChainTail = null;
@@ -154,6 +155,7 @@ public partial class AMQPManager
         {
         }
         isBusinessConnectorInstanceInvalid = true;
+        initErrorCounter = 0;
         foreach (int workerId in list)
         {
             CheckWorker(workerId);
@@ -174,7 +176,16 @@ public partial class AMQPManager
         {
             ScheduleApplicationExit(false, "Parent is gone");
         }
-        nextWorkersCheck = DateTime.Now.AddMilliseconds(workersCheckPeriod);
+        if (initErrorCounter > 3 && !exitScheduled)
+        {
+          var axaptaInitErrorNextCheck = 180000;
+          nextWorkersCheck = DateTime.Now.AddMilliseconds(axaptaInitErrorNextCheck);
+          checkWorkersTimer.Change(axaptaInitErrorNextCheck, workersCheckPeriod);
+        }
+        else
+        {
+          nextWorkersCheck = DateTime.Now.AddMilliseconds(workersCheckPeriod);
+        }
         checkWorkersAutoResetEvent.Set();
     }
 
@@ -254,6 +265,7 @@ public partial class AMQPManager
         }
         if (axconState == AxCon.State.InitError)
         {
+            initErrorCounter++;
             ScheduleFinWorkerAxCon(axcon);
         }
         if (axconState == AxCon.State.Logoff && axconAsyncInitTimedOut)
