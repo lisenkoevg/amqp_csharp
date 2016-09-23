@@ -2,7 +2,7 @@
 if exist amqp.exe del amqp.exe
 if exist amqpmanager.exe del amqpmanager.exe
 
-set path | find /i "Microsoft.NET\Framework\v4.0.30319" > nul || set path=c:\Windows\Microsoft.NET\Framework\v4.0.30319\;%path%
+set path | %systemroot%\system32\find.exe /i "Microsoft.NET\Framework\v4.0.30319" > nul || set path=c:\Windows\Microsoft.NET\Framework\v4.0.30319\;%path%
 
 if %userdomain% == 1810tz (
     set AxaptaMock=src\AxMock.cs
@@ -10,7 +10,7 @@ if %userdomain% == 1810tz (
     set define=/define:AxMock
 ) else (
     set AxaptaMock=
-    set AxaptaRef=/r:"c:\Program Files\Microsoft Dynamics AX\40\Client\Bin\Microsoft.Dynamics.BusinessConnectorNet.dll"
+    set AxaptaRef=/r:"Microsoft.Dynamics.BusinessConnectorNet.dll"
     set define=
 )
 
