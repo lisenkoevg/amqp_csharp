@@ -46,7 +46,7 @@ public partial class AMQPManager
             config = cmdConfigFile.IndexOf(' ') != -1 ? "\"" + cmdConfigFile + "\"" : cmdConfigFile;
             config = " -config=" + config;
         }
-        psi.Arguments = string.Format("/c {0}{1} -parentPID:{2}", exeName, config, parentProcessId);
+        psi.Arguments = string.Format("/c {0}{1} -parentPID{2}{3}", exeName, config, Supervisor.paramSeparator, parentProcessId);
         if (redirectError)
         {
             psi.Arguments += string.Format(" 2>>\"{0}\\{1}{2}.{3}.log\"", logDir, prefix, parentProcessId, id);
@@ -176,7 +176,7 @@ public partial class AMQPManager
         {
             ScheduleApplicationExit(false, "Parent is gone");
         }
-        if (initErrorCounter > 3 && !exitScheduled)
+        if (initErrorCounter > (startupWorkersCount / 2) && !exitScheduled)
         {
           var axaptaInitErrorNextCheck = 180000;
           nextWorkersCheck = DateTime.Now.AddMilliseconds(axaptaInitErrorNextCheck);

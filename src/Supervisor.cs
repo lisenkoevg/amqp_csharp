@@ -12,6 +12,7 @@ using System.Management;
 public partial class Supervisor
 {
     public static string[] cmdArgs;
+    public static readonly char paramSeparator = '=';
     public static Dictionary<string,string> cmdArgsDic = new Dictionary<string,string>();
     public static Process currentProcess = Process.GetCurrentProcess();
     private ConcurrentDictionary<int,AMQPManagerProcessWrapper> procList = new ConcurrentDictionary<int,AMQPManagerProcessWrapper>();
@@ -97,7 +98,7 @@ public partial class Supervisor
     public static void ShowHelp()
     {
         String exename = Path.GetFileName(System.Reflection.Assembly.GetExecutingAssembly().CodeBase).Replace("file:\\", "");
-        string msg = string.Format("Command-line options:\n{0} [-config:<path to config>] | help | ...", exename);
+        string msg = string.Format("Command-line options:\n{0} [-config{1}<path to config>] | help | ...", exename, paramSeparator);
         msg += string.Format("\nDefault config \"{0}\"", AMQPManager.configFile);
         msg += string.Format("\nhelp - help about working with service");
         if (Supervisor.isConsoleAvailable)
@@ -109,7 +110,7 @@ public partial class Supervisor
         string result = null;
         for (int i = 0; i < cmdArgs.Length; i++)
         {
-            var ar = cmdArgs[i].Split(':');
+            var ar = cmdArgs[i].Split(paramSeparator);
             if (ar[0] == parameter || ar[0] == "-" + parameter || ar[0] == "--" + parameter || ar[0] == "/" + parameter)
             {
                 result = (ar.Length > 1) ? ar[1].Trim() : "";
@@ -123,7 +124,7 @@ public partial class Supervisor
     {
         for (int i = 0; i < cmdArgs.Length; i++)
         {
-            var ar = cmdArgs[i].Split(':');
+            var ar = cmdArgs[i].Split(paramSeparator);
             string parameter = ar[0];
             parameter = Regex.Replace(parameter, "^(\\-\\-|\\-|/)", "");
             string value = (ar.Length > 1) ? ar[1].Trim() : "";
