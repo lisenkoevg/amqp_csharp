@@ -371,6 +371,12 @@ public class AMQP
                 }
                 else
                 {
+                    try
+                    {
+                      result["rpc_id"] = headers["rpc_id"].ToString();
+                    }
+                    catch
+                    {}
                     result["debug"] += ", headers[rpc_id] is " + headers["rpc_id"].GetType().Name;
                     result["debug"] += string.Format(" ({0})", headers["rpc_id"].ToString());
                 }
