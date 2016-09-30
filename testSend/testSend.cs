@@ -41,7 +41,16 @@ class TestSend
             Console.WriteLine("method={0}, message={1}", method, message);
             var body = Encoding.UTF8.GetBytes(message);
             IBasicProperties props = ch.CreateBasicProperties();
-            props.Headers = new Dictionary<string,object>() {{"method", method}, {"rpc_id", "rpc#1"}};
+            object rpc_id;
+            if (new Random().Next(0,2) == 1)
+            {
+              rpc_id = 12345;
+            }
+            else
+            {
+              rpc_id = "12345";
+            }
+            props.Headers = new Dictionary<string,object>() {{"method", method}, {"rpc_id", rpc_id}};
             ch.BasicPublish(
                 exchange: "",
                 routingKey: "ax.test",

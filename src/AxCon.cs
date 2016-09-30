@@ -275,7 +275,7 @@ public class AxCon
         ax.Logoff();
     }
 
-    public RequestState PrepareRequest(string method, Dictionary<string,dynamic> prms, string id)
+    public RequestState PrepareRequest(string method, Dictionary<string,dynamic> prms, object id)
     {
         SetRequestState(RequestState.Prepare);
         bool aReqTimedOut = false;

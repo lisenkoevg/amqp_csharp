@@ -439,7 +439,7 @@ public partial class AMQPManager
         return _workerId;
     }
 
-    private AxCon.RequestState AxPrepareRequest(AMQP amqp, string method, Dictionary<string,object> prms, string id)
+    private AxCon.RequestState AxPrepareRequest(AMQP amqp, string method, Dictionary<string,object> prms, object id)
     {
         AxCon axcon = axconDic[amqp.workerId];
         axcon.keepAliveManualResetEvent.WaitOne();
@@ -456,7 +456,7 @@ public partial class AMQPManager
         return requestState;
     }
 
-    private Dictionary<string,object> AxExecuteRequest(AMQP amqp, string id)
+    private Dictionary<string,object> AxExecuteRequest(AMQP amqp, object id)
     {
         AxCon axcon = axconDic[amqp.workerId];
         var response = new Dictionary<string,object>();
