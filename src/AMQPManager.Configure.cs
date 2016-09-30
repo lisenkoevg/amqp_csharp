@@ -1,7 +1,5 @@
 using System;
 using System.IO;
-using System.Threading;
-using System.Security.Permissions;
 
 public partial class AMQPManager
 {
@@ -16,9 +14,7 @@ public partial class AMQPManager
     private static int workersCheckPeriod = 15000;
     private static bool axconUseClassPool = false;
     private static int startupWorkersCount = 4;
-    private static bool configAutoReload = false;
-    private static FileSystemWatcher configFileWatcher;
-    
+
     public static void Configure()
     {
         dynamic conf = LoadConfig();
@@ -59,10 +55,6 @@ public partial class AMQPManager
         {
             axconUseClassPool = parsedValue != 0;
         }
-        if (conf.ContainsKey("configAutoReload") && Int32.TryParse(conf["configAutoReload"], out parsedValue))
-        {
-            configAutoReload = parsedValue != 0;
-        }
         if (conf.ContainsKey("logDir") && conf["logDir"] != null)
         {
             conf["logDir"] = conf["logDir"].Trim();
@@ -70,10 +62,6 @@ public partial class AMQPManager
             {
                 logDir = Path.IsPathRooted(conf["logDir"]) ? conf["logDir"] : Path.GetDirectoryName(configFile) + "\\" + conf["logDir"];
             }
-        }
-        if (configAutoReload)
-        {
-            AddConfigDirectoryWatcher();
         }
     }
 
@@ -130,8 +118,6 @@ public partial class AMQPManager
                 sw.WriteLine("axconUseClassPool: {0}", axconUseClassPool ? "1" : "0");
                 sw.WriteLine("# logDir relative to config file or absolute if started with \\ or <letter>:");
                 sw.WriteLine("logDir: {0}", logDir.Substring(Path.GetDirectoryName(configFile).Length + 1));
-                sw.WriteLine("# 1/0");
-                sw.WriteLine("configAutoReload: {0}", configAutoReload ? "1" : "0");
             }
         }
         catch (Exception e)
@@ -161,31 +147,5 @@ public partial class AMQPManager
         {
             try { File.Delete(testFile); } catch {}
         }
-    }
-    
-    public static void AddConfigDirectoryWatcher()
-    {
-        configFileWatcher = new FileSystemWatcher(AxCon.configDir, "*.yaml");
-        configFileWatcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName;
-        configFileWatcher.IncludeSubdirectories = true;
-        Action<object> ReloadConfig = (obj) => {
-            var ea = (System.IO.FileSystemEventArgs)obj;
-            if (Path.GetFullPath(configFile) == Path.GetFullPath(ea.FullPath)) return;
-            dbg.fa("WatchConfigDirectory AutoReload " + ea.ChangeType + " " + ea.FullPath);
-            infoMsg = AxCon.LoadConfig();
-        };
-        FileSystemEventHandler OnChanged = (source, ea) => {
-            ReloadConfig(ea);
-        };
-        
-        RenamedEventHandler OnRenamed = (source, ea) => {
-            ReloadConfig(ea);
-        };
-        configFileWatcher.Changed += OnChanged;
-        // configFileWatcher.Created += OnChanged;
-        configFileWatcher.Deleted += OnChanged;
-        configFileWatcher.Renamed += OnRenamed;
-        
-        configFileWatcher.EnableRaisingEvents = true;
     }
 }

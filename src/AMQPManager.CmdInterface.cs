@@ -9,7 +9,7 @@ using System.Linq;
 public partial class AMQPManager
 {
     private string userInput = "";
-    private static string infoMsg = "";
+    private string infoMsg = "";
     private string lastPrint = "";
     private int updateScreenPeriod = 500;
     private int inputPollPeriod = 100;
@@ -273,7 +273,7 @@ public partial class AMQPManager
             state
         ));
         output.AppendLine(string.Format(
-            "Config [{0}]:\n workersCheckPeriod={1,2}s !amqpInitTimeout={2}s !axInitTimeout={3}s !axRequestTimeout={4}s startupWorkersCount={5} useClassPool={6}\n methods config timestamp={7} configAutoReload={8}\n logDir=[{9}]",
+            "Config [{0}]:\n workersCheckPeriod={1,2}s !amqpInitTimeout={2}s !axInitTimeout={3}s !axRequestTimeout={4}s startupWorkersCount={5} useClassPool={6}\n methods config timestamp={7}\n logDir=[{8}]",
             Path.GetFullPath(configFile),
             workersCheckPeriod / 1000.0 ,
             amqpInitTimeout / 1000.0,
@@ -282,7 +282,6 @@ public partial class AMQPManager
             startupWorkersCount,
             axconUseClassPool ? "yes" : "no",
             AxCon.config["lastModified"].ToString("MM-dd HH:mm:ss"),
-            configAutoReload ? "yes" : "no",
             Path.GetFullPath(logDir)
         ));
         PrintToLog(output.ToString() + "\n" + infoMsg, dtNow);

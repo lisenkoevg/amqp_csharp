@@ -18,8 +18,8 @@ public class AMQP
     public DateTime startTime = DateTime.Now;
     public int errorCount = 0;
     public int msgCount = 0;
-    public delegate AxCon.RequestState AxPrepareRequestHandler(AMQP amqp, string method, Dictionary<string,dynamic> prms, string id);
-    public delegate Dictionary<string,object> AxExecuteRequestHandler(AMQP amqp, string id);
+    public delegate AxCon.RequestState AxPrepareRequestHandler(AMQP amqp, string method, Dictionary<string,dynamic> prms, object id);
+    public delegate Dictionary<string,object> AxExecuteRequestHandler(AMQP amqp, object id);
     public event AxPrepareRequestHandler OnAxPrepareRequest;
     public event AxExecuteRequestHandler OnAxExecuteRequest;
     public static uint msgInQueue;
@@ -237,7 +237,7 @@ public class AMQP
             msg.AppendFormat(
                 "st={0};method={1};rpc_id={2};ReplyTo={3};CorId={4};msg={5};debug={6}",
                 state, message["method"], message["rpc_id"], message["ReplyTo"], message["CorrelationId"],
-                Util.CutUserHash(message["message"]), message["debug"]
+                Util.CutUserHash((string)message["message"]), message["debug"]
             );
             if (channel.IsOpen)
             {
@@ -248,7 +248,7 @@ public class AMQP
                     AxCon.RequestState axRequestState = AxCon.RequestState.NotApplicable;
                     try
                     {
-                        request = JSON.Parse(message["message"]);
+                        request = JSON.Parse((string)message["message"]);
                         if (!(request is IDictionary))
                         {
                             request = new Dictionary<string,object>();
@@ -266,7 +266,7 @@ public class AMQP
                     }
                     if (request != null)
                     {
-                        axRequestState = OnAxPrepareRequest(this, message["method"], request, message["rpc_id"]);
+                        axRequestState = OnAxPrepareRequest(this, (string)message["method"], request, message["rpc_id"]);
                         msg.Insert(0, string.Format("reqSt={0};", axRequestState));
                     }
                     if (axRequestState == AxCon.RequestState.PrepOk || axRequestState == AxCon.RequestState.PrepWarn || request == null)
@@ -278,13 +278,13 @@ public class AMQP
                             responseObj = OnAxExecuteRequest(this, message["rpc_id"]);
                         }
                         string response = JSON.ToJSON(responseObj);
-                        if (message["ReplyTo"] != "" && message["CorrelationId"] != "")
+                        if ((string)message["ReplyTo"] != "" && (string)message["CorrelationId"] != "")
                         {
                             IBasicProperties props = channel.CreateBasicProperties();
-                            props.CorrelationId = message["CorrelationId"];
+                            props.CorrelationId = (string)message["CorrelationId"];
                             channel.BasicPublish(
                                 exchange: "",
-                                routingKey: message["ReplyTo"],
+                                routingKey: (string)message["ReplyTo"],
                                 basicProperties: props,
                                 body: Encoding.UTF8.GetBytes(response)
                             );
@@ -325,9 +325,9 @@ public class AMQP
         }
     }
 
-    private Dictionary<string,string> UnwrapMessage(BasicDeliverEventArgs ea)
+    private Dictionary<string,object> UnwrapMessage(BasicDeliverEventArgs ea)
     {
-        var result = new Dictionary<string,string>();
+        var result = new Dictionary<string,object>();
         result["message"] = "{}";
         result["debug"] = "";
         if (ea.Body != null)
@@ -371,12 +371,7 @@ public class AMQP
                 }
                 else
                 {
-                    try
-                    {
-                      result["rpc_id"] = headers["rpc_id"].ToString();
-                    }
-                    catch
-                    {}
+                    result["rpc_id"] = headers["rpc_id"];
                     result["debug"] += ", headers[rpc_id] is " + headers["rpc_id"].GetType().Name;
                     result["debug"] += string.Format(" ({0})", headers["rpc_id"].ToString());
                 }
