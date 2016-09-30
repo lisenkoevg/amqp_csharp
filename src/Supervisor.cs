@@ -329,8 +329,8 @@ public partial class Supervisor
     {
         try
         {
-            Console.SetWindowSize(120, 10);
-            Console.SetBufferSize(120, 9999);
+            Console.WindowHeight = 10;
+            Console.BufferHeight = 9999;
         }
         catch {}
     }
