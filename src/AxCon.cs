@@ -60,7 +60,8 @@ public class AxCon
     public bool isBusinessConnectorInstanceInvalid = false;
     public event Action<string> OnProcessCorruptedStateException;
     public static Logger logger = new Logger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType.Name);
-
+    public static readonly string configDir = "./config";
+    
     public AxCon(int workerId)
     {
         this.workerId = workerId;
@@ -78,7 +79,7 @@ public class AxCon
         string result = "";
         try
         {
-            var tmp = ConfigLoader.Load("./config");
+            var tmp = ConfigLoader.Load(configDir);
             config = tmp;
         }
         catch (Exception e)
