@@ -85,6 +85,7 @@ public class AxCon
         catch (Exception e)
         {
             result = e.Message;
+            logger.Log(result, "LoadConfigError");
         }
         finally
         {
